@@ -91,15 +91,30 @@ aditof::Status findDevicePathsAtMedia(const std::string &media,
         pos += strlen("vi-output, adsd3500");
     }
 
+    // pos = 0;
+    // while ((pos = str.find("adsd3500", pos)) != string::npos) {
+    //     size_t start = str.find("/dev/v4l-subdev", pos);
+    //     if (start != string::npos) {
+    //         string subdev_path = str.substr(start, strlen("/dev/v4l-subdevX"));
+    //         subdev_paths.push_back(subdev_path);
+    //         device_names.push_back("adsd3500");
+    //         LOG(INFO) << "subdev " << subdev_path << "part of adsd3500 test";
+    //     }
+    //     pos += strlen("adsd3500");
+    // }
+
     pos = 0;
-    while ((pos = str.find("adsd3500", pos)) != string::npos) {
-        size_t start = str.find("/dev/v4l-subdev", pos);
-        if (start != string::npos) {
-            string subdev_path = str.substr(start, strlen("/dev/v4l-subdevX"));
+    while ((pos = str.find("/dev/v4l-subdev", pos)) != std::string::npos) {
+        // Look 60 characters before the found position for "adsd3500"
+        size_t contextStart = (pos >= 60 ? pos - 60 : 0);
+        std::string context = str.substr(contextStart, pos - contextStart);
+        if (context.find("adsd3500") != std::string::npos) {
+            std::string subdev_path = str.substr(pos, strlen("/dev/v4l-subdevX"));
+            LOG(INFO) << "subdev " << subdev_path << "part of adsd3500 test";
             subdev_paths.push_back(subdev_path);
             device_names.push_back("adsd3500");
         }
-        pos += strlen("adsd3500");
+    pos += strlen("/dev/v4l-subdevX");
     }
 
     return Status::OK;
@@ -110,7 +125,7 @@ aditof::Status findDevicePathsAtMedia(const std::string &media,
 Status TargetSensorEnumerator::searchSensors() {
     Status status = Status::OK;
 
-    LOG(INFO) << "Looking for sensors on the target";
+    LOG(INFO) << "Looking for sensors on the target - Loek";
 
     // Find all media device paths
     std::vector<std::string> mediaPaths;
