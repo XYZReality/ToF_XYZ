@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.5)
 project(aditof-server)
 
 find_package(Protobuf 3.9.0 REQUIRED)
