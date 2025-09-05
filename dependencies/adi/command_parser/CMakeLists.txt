@@ -1,4 +1,4 @@
-cmake_minimum_required(version 3.5)
+cmake_minimum_required(VERSION 3.5)
 project(command_parser)
 
 add_library(${PROJECT_NAME} STATIC
