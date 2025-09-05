@@ -1,7 +1,7 @@
 # Copyright (c) Analog Devices, Inc. All rights reserved.
 # Minimum Version determined by the following dev environments
 # Visual Studio 2017 15.7 - CMake 3.11
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.5)
 
 # set the project name
 project(ADIToFGUI)
