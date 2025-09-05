@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(version 3.5)
 project(apps)
 
 if (ON_TARGET AND WITH_PROTOBUF_DEPENDENCY)
