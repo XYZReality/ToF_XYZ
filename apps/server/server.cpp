@@ -48,6 +48,7 @@
 #include <queue>
 #include <string>
 #include <sys/time.h>
+#include <signal.h>
 
 using namespace google::protobuf::io;
 

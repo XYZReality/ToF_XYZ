@@ -50,6 +50,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unordered_map>
+#include <unistd.h>
 
 #include "buffer_processor.h"
 
