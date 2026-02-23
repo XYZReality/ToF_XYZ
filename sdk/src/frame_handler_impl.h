@@ -46,6 +46,9 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
 
 #define METADATA_SIZE 128
 
@@ -131,6 +134,7 @@ class FrameHandlerImpl {
     bool m_fileCreated;
     bool m_endOfFile;
     std::fstream m_file;
+    int m_file_fd;        // POSIX fd for optimized writing (Hunter)
     size_t m_pos;
     int m_frameCount = 0;
 
