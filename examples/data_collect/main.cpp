@@ -24,11 +24,14 @@
 #define __STDC_FORMAT_MACROS 1
 #include <inttypes.h>
 #endif
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <string>
 #include <thread>
 #include <vector>
+
+
 
 #ifdef _WIN32
 #include <windows.h>
@@ -49,12 +52,9 @@ int main(int argc, char *argv[]);
 static const char kUsagePublic[] =
     R"(Data Collect.
     Usage:
-      data_collect CONFIG
-      data_collect [--f <folder>] [--n <ncapture>] [--m <mode>] [--wt <warmup>] [--ccb FILE] [--ip <ip>] [--fw <firmware>] [-s | --split] [-t | --netlinktest] CONFIG
+      data_collect 
+      data_collect [--f <folder>] [--n <ncapture>] [--m <mode>] [--wt <warmup>] [--ccb FILE] [--ip <ip>] [--fw <firmware>] [-s | --split] [-t | --netlinktest] [--ic <imager-configuration>] [-scf <save-configuration-file>] [-lcf <load-configuration-file>]
       data_collect (-h | --help)
-
-    Arguments:
-      CONFIG            Name of a configuration file (with .json extension)
 
     Options:
       -h --help          Show this screen.
@@ -68,8 +68,12 @@ static const char kUsagePublic[] =
       --split            Save each frame into a separate file (Debug)
       --netlinktest      Puts server on target in test mode (Debug)
       --singlethread     Store the frame to file using same tread
+      --ic <imager-configuration>   Select imager configuration: standard, standard-raw,
+                         custom, custom-raw. By default is standard.
+      --scf <save-configuration-file>    Save current configuration to json file
+      --lcf <load-configuration-file>    Load configuration from json file
 
-    Note: --m argument supports both index and string (0/sr-native) 
+    Note: --m argument supports index (0, 1, etc.) 
 
     Valid mode (--m) options are:
         0: short-range native
@@ -85,21 +89,28 @@ int main(int argc, char *argv[]) {
     std::map<std::string, struct Argument> command_map = {
         {"-h", {"--help", false, "", "", false}},
         {"-f", {"--f", false, "", ".", true}},
-        {"-n", {"--n", false, "", "1", true}},
+        {"-n", {"--n", false, "", "0", true}},
         {"-m", {"--m", false, "", "0", true}},
         {"-wt", {"--wt", false, "", "0", true}},
         {"-ip", {"--ip", false, "", "", true}},
         {"-fw", {"--fw", false, "", "", true}},
-        {"-fps", {"--fps", false, "", "", true}},
         {"-ccb", {"--ccb", false, "", "", true}},
         {"-s", {"--split", false, "", "", false}},
         {"-t", {"--netlinktest", false, "", "", false}},
         {"-st", {"--singlethread", false, "", "", false}},
-        {"-config", {"-CONFIG", true, "last", "", true}}};
+        {"-ic", {"--ic", false, "", "", true}},
+        {"-scf", {"--scf", false, "", "", true}},
+        {"-lcf", {"--lcf", false, "", "", true}}};
 
     CommandParser command;
     std::string arg_error;
+
     command.parseArguments(argc, argv, command_map);
+
+    if (argc == 1) {
+        std::cout << kUsagePublic << std::endl;
+        return 0;
+    }
 
     int result = command.checkArgumentExist(command_map, arg_error);
     if (result != 0) {
@@ -110,7 +121,7 @@ int main(int argc, char *argv[]) {
 
     result = command.helpMenu();
     if (result == 1) {
-        LOG(INFO) << kUsagePublic;
+        std::cout << kUsagePublic << std::endl;
         return 0;
     } else if (result == -1) {
         LOG(ERROR) << "Usage of argument -h/--help"
@@ -128,22 +139,14 @@ int main(int argc, char *argv[]) {
 
     result = command.checkMandatoryArguments(command_map, arg_error);
     if (result != 0) {
-        std::string argName = (arg_error == "-config")
-                                  ? "CONFIG"
-                                  : command_map[arg_error].long_option;
-
-        LOG(ERROR) << "Mandatory argument: " << argName << " missing";
+        LOG(ERROR) << "Mandatory argument: " << arg_error << " missing";
         LOG(INFO) << kUsagePublic;
         return -1;
     }
 
     result = command.checkMandatoryPosition(command_map, arg_error);
     if (result != 0) {
-        std::string argName = (arg_error == "-config")
-                                  ? "CONFIG"
-                                  : command_map[arg_error].long_option;
-
-        LOG(ERROR) << "Mandatory argument " << argName
+        LOG(ERROR) << "Mandatory argument " << arg_error
                    << " is not on its correct position ("
                    << command_map[arg_error].position << ").";
         LOG(INFO) << kUsagePublic;
@@ -156,10 +159,11 @@ int main(int argc, char *argv[]) {
 
     uint16_t err = 0;
     uint32_t n_frames = 0;
-    uint32_t mode = 0;
+    uint8_t mode = 0;
     uint32_t warmup_time = 0;
     std::string ip;
     std::string firmware;
+    std::string configuration = "standard";
 
     google::InitGoogleLogging(argv[0]);
     FLAGS_alsologtostderr = 1;
@@ -171,7 +175,7 @@ int main(int argc, char *argv[]) {
     Status status = Status::OK;
     // Parsing the arguments from command line
     err = snprintf(json_file_path, sizeof(json_file_path), "%s",
-                   command_map["-config"].value.c_str());
+                   command_map["-lcf"].value.c_str());
     if (err < 0) {
         LOG(ERROR) << "Error copying the json file path!";
         return 0;
@@ -212,18 +216,8 @@ int main(int argc, char *argv[]) {
     // Parsing number of frames
     n_frames = std::stoi(command_map["-n"].value);
 
-    // Parsing mode type
-    std::string modeName;
-    try {
-        std::size_t counter;
-        mode = std::stoi(command_map["-m"].value, &counter);
-        if (counter != command_map["-m"].value.size()) {
-            throw command_map["-m"].value.c_str();
-        }
-    } catch (const char *name) {
-        modeName = name;
-    } catch (const std::exception &) {
-        modeName = command_map["-m"].value;
+    if (!command_map["-m"].value.empty()) {
+        mode = std::stoi(command_map["-m"].value);
     }
 
     // Parsing ip
@@ -265,11 +259,37 @@ int main(int argc, char *argv[]) {
     //Parsing netLinkTest option
     bool useNetLinkTest = !command_map["-t"].value.empty();
 
+    // Parsing configuration option
+    std::vector<std::string> configurationlist = {"standard", "standard-raw",
+                                                  "coustom", "custom-raw"};
+
+    std::string configurationValue = command_map["-ic"].value;
+    if (!configurationValue.empty()) {
+        unsigned int pos =
+            std::find(configurationlist.begin(), configurationlist.end(),
+                      configurationValue) -
+            configurationlist.begin();
+        if (pos < configurationlist.size()) {
+            configuration = configurationValue;
+        }
+    }
+
+    bool saveconfigurationFile = false;
+    std::string saveconfigurationFileValue = command_map["-scf"].value;
+    if (!saveconfigurationFileValue.empty()) {
+        if (saveconfigurationFileValue.find(".json") == std::string::npos) {
+            saveconfigurationFileValue += ".json";
+        }
+        saveconfigurationFile = true;
+        strcpy(json_file_path, "");
+    }
+
     LOG(INFO) << "Output folder: " << folder_path;
     LOG(INFO) << "Mode: " << command_map["-m"].value;
     LOG(INFO) << "Number of frames: " << n_frames;
     LOG(INFO) << "Json file: " << json_file_path;
     LOG(INFO) << "Warm Up Time is: " << warmup_time << " seconds";
+    LOG(INFO) << "Configuration is: " << configuration;
 
     if (!ip.empty()) {
         LOG(INFO) << "Ip address is: " << ip;
@@ -309,6 +329,24 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    status = camera->setSensorConfiguration(configuration);
+    if (status != Status::OK) {
+        LOG(INFO) << "Could not configure camera with " << configuration;
+    } else {
+        LOG(INFO) << "Configure camera with " << configuration;
+    }
+
+    if (saveconfigurationFile) {
+        status = camera->saveDepthParamsToJsonFile(saveconfigurationFileValue);
+        if (status != Status::OK) {
+            LOG(INFO) << "Could not save current configuration info to "
+                      << saveconfigurationFileValue;
+        } else {
+            LOG(INFO) << "Current configuration info saved to file "
+                      << saveconfigurationFileValue;
+        }
+    }
+
     aditof::CameraDetails cameraDetails;
     camera->getDetails(cameraDetails);
 
@@ -334,30 +372,22 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Get frame types
-    std::vector<std::string> frameTypes;
-    status = camera->getAvailableFrameTypes(frameTypes);
-    if (status != Status::OK || frameTypes.empty()) {
-        LOG(ERROR) << "Could not aquire frame types";
-        return 0;
-    }
 
-    if (modeName.empty()) {
-        status = camera->getFrameTypeNameFromId(mode, modeName);
-        if (status != Status::OK) {
-            LOG(ERROR) << "Mode: " << mode
-                       << " is invalid for this type of camera!";
-            return 0;
-        }
+    // Get modes
+    std::vector<uint8_t> availableModes;
+    status = camera->getAvailableModes(availableModes);
+    if (status != Status::OK || availableModes.empty()) {
+        LOG(ERROR) << "Could not aquire modes";
+        return 0;
     }
 
     std::shared_ptr<DepthSensorInterface> depthSensor = camera->getSensor();
     std::string sensorName;
     status = depthSensor->getName(sensorName);
 
-    status = camera->setFrameType(modeName);
+    status = camera->setMode(mode);
     if (status != Status::OK) {
-        LOG(ERROR) << "Could not set camera frame type!";
+        LOG(ERROR) << "Could not set camera mode!";
         return 0;
     }
 
@@ -387,6 +417,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (n_frames == 0) {
+        LOG(INFO) << n_frames << " frames requested, exiting." << std::endl;
+        return -1;
+    }
+
     // Program the camera with cfg passed, set the mode by writing to 0x200 and start the camera
     status = camera->start();
     if (status != Status::OK) {
@@ -396,8 +431,6 @@ int main(int argc, char *argv[]) {
 
     aditof::Frame frame;
     FrameDetails fDetails;
-
-    uint64_t frame_size = 0;
     uint64_t elapsed_time;
 
     auto warmup_start = std::chrono::steady_clock::now();
@@ -421,6 +454,13 @@ int main(int argc, char *argv[]) {
     FrameHandler frameSaver;
     frameSaver.storeFramesToSingleFile(saveToSingleFile);
     frameSaver.setOutputFilePath(folder_path);
+
+    //drop first frame
+    status = camera->requestFrame(&frame);
+    if (status != Status::OK) {
+        LOG(ERROR) << "Could not request frame!";
+        return 0;
+    }
 
     LOG(INFO) << "Requesting " << n_frames << " frames!";
     auto start_time = std::chrono::high_resolution_clock::now();

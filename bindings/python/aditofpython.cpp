@@ -83,6 +83,32 @@ PYBIND11_MODULE(aditofpython, m) {
                aditof::Adsd3500Status::FIRMWARE_UPDATE_COMPLETE)
         .value("Nvm_Write_Complete", aditof::Adsd3500Status::NVM_WRITE_COMPLETE)
         .value("Imager_Error", aditof::Adsd3500Status::IMAGER_ERROR)
+        .value("Timeout_Error", aditof::Adsd3500Status::TIMEOUT_ERROR)
+        .value("Dynamic_Mode_Switching_Not_Enabled",
+               aditof::Adsd3500Status::DYNAMIC_MODE_SWITCHING_NOT_ENABLED)
+        .value("Invalid_Dynamic_Mode_Compositions",
+               aditof::Adsd3500Status::INVALID_DYNAMIC_MODE_COMPOSITIONS)
+        .value("Invalid_Phase_Invalid_Value",
+               aditof::Adsd3500Status::INVALID_PHASE_INVALID_VALUE)
+        .value("CCB_Write_Complete", aditof::Adsd3500Status::CCB_WRITE_COMPLETE)
+        .value("Invalid_CCB_Write_CRC",
+               aditof::Adsd3500Status::INVALID_CCB_WRITE_CRC)
+        .value("CFG_Write_Complete", aditof::Adsd3500Status::CFG_WRITE_COMPLETE)
+        .value("Invalid_CFG_Write_CRC",
+               aditof::Adsd3500Status::INVALID_CFG_WRITE_CRC)
+        .value("Init_FW_Write_Complete",
+               aditof::Adsd3500Status::INIT_FW_WRITE_COMPLETE)
+        .value("Invalid_Init_FW_Write_CRC",
+               aditof::Adsd3500Status::INVALID_INIT_FW_WRITE_CRC)
+        .value("Invalid_Bin_Size", aditof::Adsd3500Status::INVALID_BIN_SIZE)
+        .value("ACK_Error", aditof::Adsd3500Status::ACK_ERROR)
+        .value("Flash_Status_Chunk_Already_Found",
+               aditof::Adsd3500Status::FLASH_STATUS_CHUNK_ALREADY_FOUND)
+        .value("Invalid_INI_Update_In_PCM_Mode",
+               aditof::Adsd3500Status::INVALID_INI_UPDATE_IN_PCM_MODE)
+        .value("Unsupported_Mode_INI_Read",
+               aditof::Adsd3500Status::UNSUPPORTED_MODE_INI_READ)
+        .value("Imager_Stream_Off", aditof::Adsd3500Status::IMAGER_STREAM_OFF)
         .value("Unknown_Error_Id", aditof::Adsd3500Status::UNKNOWN_ERROR_ID);
 
     // Frame declarations
@@ -187,18 +213,41 @@ PYBIND11_MODULE(aditofpython, m) {
         .def_readwrite("connectionType",
                        &aditof::SensorDetails::connectionType);
 
-    py::class_<aditof::DepthSensorFrameContent>(m, "DepthSensorFrameContent")
+    py::class_<aditof::DriverConfiguration>(m, "DriverConfiguration")
         .def(py::init<>())
-        .def_readwrite("type", &aditof::DepthSensorFrameContent::type)
-        .def_readwrite("width", &aditof::DepthSensorFrameContent::width)
-        .def_readwrite("height", &aditof::DepthSensorFrameContent::height);
+        .def_readwrite("depthBits", &aditof::DriverConfiguration::depthBits)
+        .def_readwrite("abBits", &aditof::DriverConfiguration::abBits)
+        .def_readwrite("confBits", &aditof::DriverConfiguration::confBits)
+        .def_readwrite("pixelFormat", &aditof::DriverConfiguration::pixelFormat)
+        .def_readwrite("driverWidth", &aditof::DriverConfiguration::driverWidth)
+        .def_readwrite("driverHeigth",
+                       &aditof::DriverConfiguration::driverHeigth)
+        .def_readwrite("pixelFromatIndex",
+                       &aditof::DriverConfiguration::pixelFormatIndex);
 
-    py::class_<aditof::DepthSensorFrameType>(m, "DepthSensorFrameType")
+    py::class_<aditof::DepthSensorModeDetails>(m, "DepthSensorModeDetails")
         .def(py::init<>())
-        .def_readwrite("type", &aditof::DepthSensorFrameType::type)
-        .def_readwrite("content", &aditof::DepthSensorFrameType::content)
-        .def_readwrite("width", &aditof::DepthSensorFrameType::width)
-        .def_readwrite("height", &aditof::DepthSensorFrameType::height);
+        .def_readwrite("numberOfPhases",
+                       &aditof::DepthSensorModeDetails::numberOfPhases)
+        .def_readwrite("frameContent",
+                       &aditof::DepthSensorModeDetails::frameContent)
+        .def_readwrite("modeNumber",
+                       &aditof::DepthSensorModeDetails::modeNumber)
+        .def_readwrite("pixelFormatIndex",
+                       &aditof::DepthSensorModeDetails::pixelFormatIndex)
+        .def_readwrite("frameWidthInBytes",
+                       &aditof::DepthSensorModeDetails::frameWidthInBytes)
+        .def_readwrite("frameHeightInBytes",
+                       &aditof::DepthSensorModeDetails::frameHeightInBytes)
+        .def_readwrite("baseResolutionWidth",
+                       &aditof::DepthSensorModeDetails::baseResolutionWidth)
+        .def_readwrite("baseResolutionHeight",
+                       &aditof::DepthSensorModeDetails::baseResolutionHeight)
+        .def_readwrite("metadataSize",
+                       &aditof::DepthSensorModeDetails::metadataSize)
+        .def_readwrite("isPCM", &aditof::DepthSensorModeDetails::isPCM)
+        .def_readwrite("driverConfiguration",
+                       &aditof::DepthSensorModeDetails::driverConfiguration);
 
     // Helpers
 
@@ -236,6 +285,8 @@ PYBIND11_MODULE(aditofpython, m) {
                 format = "B";
             } else if (f.details.subelementSize == 2) {
                 format = "H";
+            } else {
+                format = "f"; // float for MP confidence frames
             }
 
             return py::buffer_info(
@@ -268,12 +319,23 @@ PYBIND11_MODULE(aditofpython, m) {
              py::arg("configFilepath") = "")
         .def("start", &aditof::Camera::start)
         .def("stop", &aditof::Camera::stop)
-        .def("setMode", &aditof::Camera::setMode, py::arg("mode"),
-             py::arg("modeFilename") = "")
+        .def(
+            "getAvailableControls",
+            [](const aditof::Camera &camera, py::list modes) {
+                std::vector<std::string> modeList;
+                aditof::Status status = camera.getAvailableControls(modeList);
+
+                for (const auto &mode : modeList)
+                    modes.append(mode);
+
+                return status;
+            },
+            py::arg("availableModes"))
+        .def("setMode", &aditof::Camera::setMode, py::arg("mode"))
         .def(
             "getAvailableModes",
             [](const aditof::Camera &camera, py::list modes) {
-                std::vector<std::string> modeList;
+                std::vector<std::uint8_t> modeList;
                 aditof::Status status = camera.getAvailableModes(modeList);
 
                 for (const auto &mode : modeList)
@@ -282,53 +344,33 @@ PYBIND11_MODULE(aditofpython, m) {
                 return status;
             },
             py::arg("availableModes"))
-        .def("setFrameType", &aditof::Camera::setFrameType,
-             py::arg("frameType"))
-        .def(
-            "getAvailableFrameTypes",
-            [](const aditof::Camera &camera, py::list types) {
-                std::vector<std::string> typeList;
-                aditof::Status status = camera.getAvailableFrameTypes(typeList);
-
-                for (const auto &type : typeList)
-                    types.append(type);
-
-                return status;
-            },
-            py::arg("availableFrameTypes"))
-        .def("getIniParams",
+        .def("getFrameProcessParams",
              [](aditof::Camera &camera) {
-                 std::map<std::string, float> cppParams;
-                 aditof::Status status = camera.getIniParams(cppParams);
+                 std::map<std::string, std::string> cppParams;
+                 aditof::Status status =
+                     camera.getFrameProcessParams(cppParams);
 
                  py::dict pyParams;
                  for (const auto &pair : cppParams) {
-                     pyParams[py::str(pair.first)] = py::float_(pair.second);
+                     pyParams[py::str(pair.first)] = py::str(pair.second);
                  }
 
                  return std::make_pair(status, pyParams);
              })
         .def(
-            "setIniParams",
+            "setFrameProcessParams",
             [](aditof::Camera &camera, py::dict params) {
-                std::map<std::string, float> cppParams;
+                std::map<std::string, std::string> cppParams;
 
                 for (std::pair<py::handle, py::handle> item : params) {
                     auto key = item.first.cast<std::string>();
-                    auto value = item.second.cast<float>();
+                    auto value = item.second.cast<std::string>();
                     cppParams[key] = value;
                 }
 
-                return camera.setIniParams(cppParams);
+                return camera.setFrameProcessParams(cppParams);
             },
             py::arg("params"))
-        .def(
-            "getFrameTypeNameFromId",
-            [](const aditof::Camera &camera, int id, std::string name) {
-                aditof::Status status = camera.getFrameTypeNameFromId(id, name);
-                return std::make_pair(status, name);
-            },
-            py::arg("id"), py::arg("name"))
         .def("requestFrame", &aditof::Camera::requestFrame, py::arg("frame"))
         .def("getDetails", &aditof::Camera::getDetails, py::arg("details"))
         .def(
@@ -359,6 +401,14 @@ PYBIND11_MODULE(aditofpython, m) {
              py::arg("enable"))
         .def("adsd3500UpdateFirmware", &aditof::Camera::adsd3500UpdateFirmware,
              py::arg("filePath"))
+        .def("saveDepthParamsToJsonFile",
+             &aditof::Camera::saveDepthParamsToJsonFile,
+             py::arg("savePathFile"))
+        .def("loadDepthParamsFromJsonFile",
+             &aditof::Camera::loadDepthParamsFromJsonFile,
+             py::arg("loadPathFile"), py::arg("mode"))
+        .def("setSensorConfiguration", &aditof::Camera::setSensorConfiguration,
+             py::arg("sensorConf"))
         .def("adsd3500SetToggleMode", &aditof::Camera::adsd3500SetToggleMode,
              py::arg("mode"))
         .def("adsd3500ToggleFsync", &aditof::Camera::adsd3500ToggleFsync)
@@ -515,6 +565,17 @@ PYBIND11_MODULE(aditofpython, m) {
              py::arg("value"))
         .def("adsd3500SetEnableMetadatainAB",
              &aditof::Camera::adsd3500SetEnableMetadatainAB, py::arg("value"))
+        .def("adsd3500DisableCCBM", &aditof::Camera::adsd3500DisableCCBM,
+             py::arg("value"))
+        .def("adsd3500IsCCBMsupported",
+             [](aditof::Camera &camera) {
+                 bool supported;
+                 aditof::Status status =
+                     camera.adsd3500IsCCBMsupported(supported);
+                 return std::make_pair(status, supported);
+             })
+        .def("adsd3500ResetIniParamsForMode",
+             &aditof::Camera::adsd3500ResetIniParamsForMode, py::arg("value"))
         .def("adsd3500GetEnableMetadatainAB",
              [](aditof::Camera &camera) {
                  uint16_t value;
@@ -540,6 +601,12 @@ PYBIND11_MODULE(aditofpython, m) {
                 return std::make_tuple(status, chipStatus, imagerStatus);
             },
             py::arg("chipStatus"), py::arg("imagerStatus"))
+        .def("adsd3500setEnableDynamicModeSwitching",
+             &aditof::Camera::adsd3500setEnableDynamicModeSwitching,
+             py::arg("enable"))
+        .def("adsds3500setDynamicModeSwitchingSequence",
+             &aditof::Camera::adsds3500setDynamicModeSwitchingSequence,
+             py::arg("sequence"))
         .def(
             "readSerialNumber",
             [](aditof::Camera &camera, std::string serialNumber,
@@ -569,28 +636,6 @@ PYBIND11_MODULE(aditofpython, m) {
                 return f;
             },
             py::arg("dataType"))
-        .def(
-            "getAvailableAttributes",
-            [](aditof::Frame &frame, py::list attributes) {
-                std::vector<std::string> attributesList;
-                aditof::Status status =
-                    frame.getAvailableAttributes(attributesList);
-
-                for (const auto &s : attributesList)
-                    attributes.append(s);
-
-                return status;
-            },
-            py::arg("attributes"))
-        .def(
-            "setAttribute",
-            [](aditof::Frame &frame, std::string attribute, std::string value) {
-                aditof::Status status = frame.setAttribute(attribute, value);
-                return status;
-            },
-            py::arg("attribute"), py::arg("value"))
-        .def("getAttribute", &aditof::Frame::getAttribute, py::arg("attribute"),
-             py::arg("value"))
         .def("getMetadataStruct", [](aditof::Frame &frame) {
             aditof::Metadata metadata;
             aditof::Status status = frame.getMetadataStruct(metadata);
@@ -605,29 +650,32 @@ PYBIND11_MODULE(aditofpython, m) {
         .def("start", &aditof::DepthSensorInterface::start)
         .def("stop", &aditof::DepthSensorInterface::stop)
         .def(
-            "getAvailableFrameTypes",
-            [](aditof::DepthSensorInterface &device, py::list types) {
-                std::vector<aditof::DepthSensorFrameType> typeList;
-                aditof::Status status = device.getAvailableFrameTypes(typeList);
+            "getAvailableModes",
+            [](aditof::DepthSensorInterface &device, py::list modes) {
+                std::vector<std::uint8_t> modeList;
+                aditof::Status status = device.getAvailableModes(modeList);
 
-                for (const auto &type : typeList)
-                    types.append(type);
+                for (const auto &mode : modeList)
+                    modes.append(mode);
 
                 return status;
             },
-            py::arg("types"))
-        .def("setFrameType", &aditof::DepthSensorInterface::setFrameType,
-             py::arg("details"))
+            py::arg("modes"))
+        .def("getModeDetails", &aditof::DepthSensorInterface::getModeDetails,
+             py::arg("mode"), py::arg("details"))
         .def(
-            "program",
+            "setMode",
             [](aditof::DepthSensorInterface &device,
-               py::array_t<uint8_t> firmware, size_t size) {
-                py::buffer_info buffInfo = firmware.request();
-                uint8_t *ptr = static_cast<uint8_t *>(buffInfo.ptr);
-
-                return device.program(ptr, size);
+               const aditof::DepthSensorModeDetails &mode) {
+                return device.setMode(mode);
             },
-            py::arg("firmware"), py::arg("size"))
+            py::arg("mode"))
+        .def(
+            "setMode",
+            [](aditof::DepthSensorInterface &device, const uint8_t &mode) {
+                return device.setMode(mode);
+            },
+            py::arg("mode"))
         .def(
             "getFrame",
             [](aditof::DepthSensorInterface &device,
@@ -638,66 +686,6 @@ PYBIND11_MODULE(aditofpython, m) {
                 return device.getFrame(ptr);
             },
             py::arg("buffer"))
-        .def(
-            "regread",
-            [](aditof::DepthSensorInterface &device, uint16_t address) {
-                uint16_t addrPtr[1], dataPtr[1];
-                addrPtr[0] = address;
-                device.readRegisters(addrPtr, dataPtr, 1);
-                return dataPtr[0];
-            },
-            py::arg("address"))
-        .def(
-            "regwrite",
-            [](aditof::DepthSensorInterface &device, uint16_t address,
-               uint16_t data) {
-                uint16_t addrPtr[1], dataPtr[1];
-                addrPtr[0] = address;
-                dataPtr[0] = data;
-                return device.writeRegisters(addrPtr, dataPtr, 1);
-            },
-            py::arg("address"), py::arg("data"))
-        .def(
-            "regwriteburst",
-            [](aditof::DepthSensorInterface &device, uint16_t address,
-               py::array_t<uint16_t> data, const std::string &incr) {
-                uint16_t addrPtr[1];
-                addrPtr[0] = address;
-                if (incr.compare("increment") == 0)
-                    addrPtr[0] |= 0x4000;
-                py::buffer_info dataBuffInfo = data.request();
-                uint16_t *dataPtr = static_cast<uint16_t *>(dataBuffInfo.ptr);
-                return device.writeRegisters(addrPtr, dataPtr, data.size());
-            },
-            py::arg("address"), py::arg("data"), py::arg("increment"))
-        .def(
-            "readRegisters",
-            [](aditof::DepthSensorInterface &device,
-               py::array_t<uint16_t> address, py::array_t<uint16_t> data,
-               size_t length) {
-                py::buffer_info addrBuffInfo = address.request();
-                uint16_t *addrPtr = static_cast<uint16_t *>(addrBuffInfo.ptr);
-
-                py::buffer_info dataBuffInfo = data.request(true);
-                uint16_t *dataPtr = static_cast<uint16_t *>(dataBuffInfo.ptr);
-
-                return device.readRegisters(addrPtr, dataPtr, length);
-            },
-            py::arg("address"), py::arg("data"), py::arg("length"))
-        .def(
-            "writeRegisters",
-            [](aditof::DepthSensorInterface &device,
-               py::array_t<uint16_t> address, py::array_t<uint16_t> data,
-               size_t length) {
-                py::buffer_info addrBuffInfo = address.request();
-                uint16_t *addrPtr = static_cast<uint16_t *>(addrBuffInfo.ptr);
-
-                py::buffer_info dataBuffInfo = data.request();
-                uint16_t *dataPtr = static_cast<uint16_t *>(dataBuffInfo.ptr);
-
-                return device.writeRegisters(addrPtr, dataPtr, length);
-            },
-            py::arg("address"), py::arg("data"), py::arg("length"))
         .def(
             "getAvailableControls",
             [](const aditof::DepthSensorInterface &device, py::list controls) {
@@ -842,12 +830,13 @@ PYBIND11_MODULE(aditofpython, m) {
         .def("setInputFileName", &aditof::FrameHandler::setInputFileName,
              py::arg("fullFileName"))
         .def("saveFrameToFile", &aditof::FrameHandler::saveFrameToFile,
-             py::arg("frame"), py::arg("fileName"))
+             py::arg("frame"), py::arg("fileName") = "")
         .def("saveFrameToFileMultithread",
              &aditof::FrameHandler::saveFrameToFileMultithread,
-             py::arg("frame"), py::arg("fileName"))
+             py::arg("frame"), py::arg("fileName") = "")
         .def("readNextFrame", &aditof::FrameHandler::readNextFrame,
-             py::arg("frame"), py::arg("fullFileName"))
+             py::arg("frame"), py::arg("fullFileName"),
+             py::return_value_policy::reference_internal)
         .def("setCustomFormat", &aditof::FrameHandler::setCustomFormat,
              py::arg("format"))
         .def("storeFramesToSingleFile",

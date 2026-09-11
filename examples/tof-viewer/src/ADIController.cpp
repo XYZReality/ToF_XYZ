@@ -11,14 +11,15 @@
 #include <aditof/log.h>
 #endif
 #include <iostream>
+#include <memory>
 
 using namespace adicontroller;
 
 ADIController::ADIController(
     std::vector<std::shared_ptr<aditof::Camera>> camerasList)
-    : m_cameraInUse(-1), m_frameRequested(false),
-      m_recorder(new ADIToFRecorder()) {
+    : m_cameraInUse(-1), m_frameRequested(false) {
 
+    m_recorder = std::make_unique<ADIToFRecorder>();
     m_cameras = camerasList;
     if (m_cameras.size()) {
         // Use the first camera that is found
@@ -70,24 +71,12 @@ std::string ADIController::getMode() const {
     return "";
 }
 
-void ADIController::setMode(const std::string &mode) {
+void ADIController::setMode(const uint8_t &mode) {
     if (m_cameraInUse == -1) {
         return;
     }
     auto camera = m_cameras[static_cast<unsigned int>(m_cameraInUse)];
     camera->setMode(mode);
-    //camera->setFrameType(mode);
-}
-
-std::vector<std::string>
-ADIController::getAvailableModes(std::vector<std::string> &availableModes) {
-    if (m_cameraInUse == -1) {
-        return availableModes;
-    }
-
-    m_cameras[static_cast<unsigned int>(m_cameraInUse)]->getAvailableModes(
-        availableModes);
-    return availableModes;
 }
 
 std::pair<float, float> ADIController::getTemperature() {
@@ -101,31 +90,18 @@ std::pair<float, float> ADIController::getTemperature() {
 
     // TODO: Implement
     //std::shared_ptr<aditof::DepthSensorInterface> device = camera->getSensor();
-    //device->readRegistersTemp(returnValue.first);
     //device->readLaserTemp(returnValue.second);
     return returnValue;
-}
-
-aditof::Status ADIController::writeAFEregister(uint16_t *address,
-                                               uint16_t *data,
-                                               uint16_t noOfEntries) {
-    auto depthSensor =
-        m_cameras[static_cast<unsigned int>(m_cameraInUse)]->getSensor();
-    return depthSensor->writeRegisters(address, data, noOfEntries);
-}
-
-aditof::Status ADIController::readAFEregister(uint16_t *address, uint16_t *data,
-                                              uint16_t noOfEntries) {
-
-    auto depthSensor =
-        m_cameras[static_cast<unsigned int>(m_cameraInUse)]->getSensor();
-    return depthSensor->readRegisters(address, data, noOfEntries);
 }
 
 void ADIController::startRecording(const std::string &fileName,
                                    unsigned int height, unsigned int width,
                                    unsigned int fps) {
-    m_recorder->m_saveBinaryFormat = this->m_saveBinaryFormat;
+
+    if (m_recorder != nullptr) {
+        m_recorder = std::make_unique<ADIToFRecorder>();
+    }
+    m_recorder->setSaveBinaryFormat(this->m_saveBinaryFormat);
     m_recorder->startRecording(fileName, height, width, fps);
 }
 
@@ -146,7 +122,7 @@ bool ADIController::recordingFinished() const {
 }
 
 bool ADIController::playbackPaused() const {
-    return m_recorder->isPlaybackPaused();
+    return m_recorder->getPlaybackPaused();
 }
 
 void ADIController::pausePlayback(bool paused) const {
@@ -235,3 +211,5 @@ int ADIController::getbitCount() const {
         cameraDetails);
     return cameraDetails.bitCount;
 }
+
+int ADIController::getCameraInUse() const { return m_cameraInUse; }

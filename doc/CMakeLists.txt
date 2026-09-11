@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0)
-project(doc)
+project(evalkit-doc)
 
 find_program(DOXYGEN_PATH doxygen)
 if (NOT DOXYGEN_PATH)
@@ -7,7 +7,7 @@ if (NOT DOXYGEN_PATH)
 endif()
 
 ######################### This script variables ###############################
-set(SOURCES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include/aditof)
+set(SOURCES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../libaditof/sdk/include/aditof)
 set(DOXY_WORKING_DIR ${CMAKE_CURRENT_BINARY_DIR}/doxygen_doc)
 
 ############################# Doc variables ###################################
@@ -37,7 +37,7 @@ configure_file(
 )
 
 ################# Custom target to build Doxygen doc ##########################
-add_custom_target(doc
+add_custom_target(evalkit-doc
     COMMAND ${DOXYGEN_PATH} sdk-api.doxy
     COMMAND ${CMAKE_COMMAND} -E make_directory ${DOXY_WORKING_DIR}/html
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/img ${DOXY_WORKING_DIR}/html/img

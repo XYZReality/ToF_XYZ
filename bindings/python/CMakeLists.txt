@@ -7,40 +7,24 @@ function(PopulateforPython targetdir)
     
     if(WIN32)
         add_custom_command( TARGET aditofpython POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/sdk/$<CONFIG>" "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/$<CONFIG>"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/src/cameras/itof-camera/config "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/$<CONFIG>/config"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/libaditof/sdk/$<CONFIG>" "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/$<CONFIG>"
             COMMAND ${CMAKE_COMMAND} -E copy ${PythonSources} "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/$<CONFIG>"
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TARGET_OUTPUT_NAME}" "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/$<CONFIG>"
         )
     elseif(UNIX)
         add_custom_command( TARGET aditofpython POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/sdk/" "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/src/cameras/itof-camera/config "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/config"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/libaditof/sdk/" "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/"
             COMMAND ${CMAKE_COMMAND} -E copy ${PythonSources} "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/"
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_OUTPUT_NAME}" "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/"
         )
     endif()
-    if (WIN32)
-        if (EXISTS "${GLOG_BIN_DIR}")
-            if (WITH_GLOG_DEPENDENCY)
-                add_custom_command( TARGET aditofpython POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_directory ${GLOG_BIN_DIR} "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/$<CONFIG>")
-            endif()
-        endif()
 
-        if (EXISTS "${LWS_CMAKE_DIR}/../bin")
-            if (WITH_NETWORK)
-                add_custom_command(TARGET aditofpython POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory ${LWS_CMAKE_DIR}/../bin "${CMAKE_CURRENT_BINARY_DIR}/${targetdir}/$<CONFIG>")
-            endif()
-        endif()
-    
-    endif()
 
 endfunction()
 
-find_package(pybind11 REQUIRED PATHS ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+add_subdirectory(pybind11)
 
-include_directories(../../sdk/includes)
+include_directories(${LIBADITOF_SUBMODULE_PATH}/sdk/includes)
 
 pybind11_add_module(aditofpython aditofpython.cpp)
 
@@ -51,12 +35,16 @@ get_target_property(target_suffix aditofpython SUFFIX)
 set(TARGET_OUTPUT_NAME "${target_prefix}aditofpython${target_suffix}")
 
 if (WITH_EXAMPLES)
-    PopulateforPython("examples/dnn")
+    #PopulateforPython("examples/dnn")
     PopulateforPython("examples/first_frame")
+    #PopulateforPython("examples/gesture_rec")
     PopulateforPython("examples/streaming")
-    PopulateforPython("examples/skeletal_tracking")
-    PopulateforPython("examples/skeletal_tracking_in_pointcloud")
-    PopulateforPython("examples/saveCCBToFile")
+    #PopulateforPython("examples/skeletal_tracking")
+    #PopulateforPython("examples/skeletal_tracking_in_pointcloud")
+    #PopulateforPython("examples/saveCCBToFile")
+    PopulateforPython("examples/data_collect")
+    #PopulateforPython("examples/showPointCloud")
+    PopulateforPython("examples/dual_cameras")
 
 endif()
 

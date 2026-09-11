@@ -25,7 +25,6 @@
 
 #include <aditof/system.h>
 #include <cJSON.h>
-#define EMBED_HDR_LENGTH 128
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -74,10 +73,10 @@ using namespace adiMainWindow;
 
 auto startTime = std::chrono::system_clock::now();
 static int numProcessors;
-static std::string last_mode = "";
-std::map<std::string, float> ini_params;
-std::map<std::string, float> modified_ini_params;
-std::map<std::string, float> last_ini_params;
+static uint8_t last_mode = -1;
+std::map<std::string, std::string> ini_params;
+std::map<std::string, std::string> modified_ini_params;
+std::map<std::string, std::string> last_ini_params;
 bool use_modified_ini_params = false;
 uint16_t expectedFPS = 0;
 GLFWimage icons[1];
@@ -85,6 +84,8 @@ GLFWimage logos[1];
 GLuint logo_texture;
 uint32_t firstFrame = 0;
 uint32_t frameRecvd = 0;
+char saveConfigurationPath[512] = "currentconfiguration.json";
+
 ADIMainWindow::ADIMainWindow() : m_skipNetworkCameras(true) {
 #if defined(Debug) && defined(_WIN32)
     static HANDLE self;
@@ -177,6 +178,21 @@ ADIMainWindow::ADIMainWindow() : m_skipNetworkCameras(true) {
             }
         }
 
+        const cJSON *json_camera_max_frame_rate =
+            cJSON_GetObjectItemCaseSensitive(config_json, "max_frame_rate");
+
+        m_max_frame_rate = 0;
+        if (cJSON_IsNumber(json_camera_max_frame_rate)) {
+            m_max_frame_rate =
+                static_cast<uint32_t>(json_camera_max_frame_rate->valueint);
+            if (m_max_frame_rate == 0 || m_max_frame_rate > MAX_FRAME_RATE) {
+                LOG(WARNING)
+                    << "Frame Rate, " << m_max_frame_rate
+                    << " too high for Viewer, dropping to " << MAX_FRAME_RATE;
+                m_max_frame_rate = MAX_FRAME_RATE;
+            }
+        }
+
         cJSON_Delete(config_json);
     }
     if (!ifs.fail()) {
@@ -191,10 +207,10 @@ ADIMainWindow::~ADIMainWindow() {
     }
 
     //Recording flags
-    if (view != nullptr && !view->m_ctrl->m_recorder->m_finishRecording) {
+    if (view != nullptr && !view->m_ctrl->m_recorder->getFinishRecording()) {
         view->m_ctrl->m_recorder->stopRecording();
     }
-    if (view != nullptr && !view->m_ctrl->m_recorder->_stopPlayback) {
+    if (view != nullptr && !view->m_ctrl->m_recorder->getStopPlayback()) {
         view->m_ctrl->m_recorder->stopPlayback();
         stopPlayCCD();
     }
@@ -236,6 +252,14 @@ double ADIMainWindow::getCurrentValue() {
 
 #endif
     return percent * 100;
+}
+
+void ADIMainWindow::CustomizeMenus() {
+    ImGuiStyle &style = ImGui::GetStyle();
+
+    // Set the color of the border
+    style.Colors[ImGuiCol_Border] =
+        ImVec4(0.7f, 0.7f, 0.7f, 1.0f); // (R, G, B, A);
 }
 
 static void glfw_error_callback(int error, const char *description) {
@@ -309,6 +333,7 @@ bool ADIMainWindow::startImGUI(const ADIViewerArgs &args) {
         fprintf(stderr, "Failed to initialize OpenGL loader!\n");
         return false;
     }
+
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -331,16 +356,15 @@ bool ADIMainWindow::startImGUI(const ADIViewerArgs &args) {
     setDpi();
 
     // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
+    //ImGui::StyleColorsDark();
     //OR
-    // ImGui::StyleColorsClassic();
+    ImGui::StyleColorsClassic();
+    CustomizeMenus();
 
     // Setup Platform/Renderer bindings
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
-    m_controller = std::make_shared<adicontroller::ADIController>(
-        std::vector<std::shared_ptr<aditof::Camera>>());
     RefreshDevices();
 
     //Look for Company Logo
@@ -465,7 +489,7 @@ void ADIMainWindow::handleInterruptCallback() {
     }
     ret_status = camera->getSensor()->adsd3500_register_interrupt_callback(cb);
     if (ret_status != aditof::Status::OK) {
-        my_log.AddLog("Could not register interrupt callback");
+        LOG(ERROR) << "Could not register interrupt callback";
         return;
     }
 }
@@ -474,10 +498,13 @@ void ADIMainWindow::showMainMenu() {
     static bool show_app_log = true;
     static bool show_ini_window = false;
 
-    if (show_app_log)
+    if (show_app_log) {
         showLogWindow(&show_app_log);
-    if (show_ini_window && isPlaying)
+    }
+
+    if (show_ini_window && isPlaying) {
         showIniWindow(&show_ini_window);
+    }
 
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("Open")) {
@@ -489,11 +516,22 @@ void ADIMainWindow::showMainMenu() {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Tools")) {
+
             showRecordMenu();
             showPlaybackMenu();
             ImGui::Separator();
-            ImGui::MenuItem("Debug Log", NULL, &show_app_log);
-            ImGui::MenuItem("Ini Params", NULL, &show_ini_window);
+            ImGui::MenuItem("Debug Log", nullptr, &show_app_log);
+            //ImGui::MenuItem("Ini Params", nullptr, &show_ini_window,
+            //                cameraWorkerDone && isPlaying);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Load Configuration", nullptr, false,
+                                cameraWorkerDone && !isPlaying)) {
+                showLoadAdsdParamsMenu();
+            }
+            if (ImGui::MenuItem("Save Configuration", nullptr, false,
+                                cameraWorkerDone && !isPlaying)) {
+                showSaveAdsdParamsMenu();
+            }
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -531,17 +569,18 @@ void ADIMainWindow::showRecordMenu() {
 #endif
                 strftime(time_buffer, sizeof(time_buffer), "%Y%m%d%H%M",
                          &timeinfo);
-                tempPath += "\\frames" + std::string(time_buffer);
-
+                tempPath += "\\mode_" + std::to_string(modeSelection) +
+                            "_frames" + std::string(time_buffer);
                 int filterIndex = 0;
                 char tempbuff[MAX_PATH];
                 tempPath.copy(tempbuff, tempPath.length(), 0);
                 tempbuff[tempPath.length()] = '\0';
-                std::string saveFile =
-                    getADIFileName(NULL, tempbuff, filterIndex);
+                std::string saveFile = getADIFileName(
+                    nullptr, "ADI ToF Recording Files\0*.bin\0All Files\0*.*\0",
+                    tempbuff, filterIndex);
                 //Check if filename exists and format is corrct
                 if (!saveFile.empty() && filterIndex) {
-                    if (!isPlaying && filterIndex) {
+                    if (!isPlaying) {
                         //"Press" the play button, in case it is not pressed.
                         PlayCCD(
                             modeSelection,
@@ -571,15 +610,85 @@ void ADIMainWindow::showRecordMenu() {
                 isPlaying = false;
             }
         }
-
-        /* AS 2023-6-6: Temporarily disable.
-                ImGui::NewLine();
-                ImGui::Checkbox("Save Binary records", &m_saveBinaryFormatTmp);
-                if (view != NULL) {
-                    view->setSaveBinaryFormat(m_saveBinaryFormatTmp);
-                }
-                */
         ImGui::EndMenu();
+    }
+}
+
+void ADIMainWindow::showLoadAdsdParamsMenu() {
+
+    int FilterIndex = 0;
+    std::string fs =
+        openADIFileName("ADI ToF Config Files\0*.json\0", nullptr, FilterIndex);
+    LOG(INFO) << "Load File selected: " << fs;
+
+    if (fs.empty()) {
+        return;
+    }
+
+    bool loadconfigurationFile = false;
+    std::string loadconfigurationFileValue = std::string(fs);
+    if (!loadconfigurationFileValue.empty()) {
+        if (loadconfigurationFileValue.find(".json") == std::string::npos) {
+            loadconfigurationFileValue += ".json";
+        }
+        loadconfigurationFile = true;
+    }
+    if (loadconfigurationFile && view) {
+        auto camera = view->m_ctrl->m_cameras[static_cast<unsigned int>(
+            view->m_ctrl->getCameraInUse())];
+
+        aditof::Status status =
+            camera->loadDepthParamsFromJsonFile(loadconfigurationFileValue);
+
+        if (status != aditof::Status::OK) {
+            LOG(INFO) << "Could not load current configuration "
+                         "info to "
+                      << loadconfigurationFileValue;
+        } else {
+            LOG(INFO) << "Current configuration info from file "
+                      << loadconfigurationFileValue;
+        }
+    }
+}
+
+void ADIMainWindow::showSaveAdsdParamsMenu() {
+
+    ImGuiExtensions::ButtonColorChanger colorChangerStartRec(customColorPlay,
+                                                             isPlaying);
+
+    char filename[MAX_PATH] = "";
+    int FilterIndex;
+    std::string fs = getADIFileName(
+        nullptr, "ADI ToF Config Files\0*.json\0All Files\0*.*\0", filename,
+        FilterIndex);
+    LOG(INFO) << "Selecting to save configuration the file: " << fs;
+
+    bool saveconfigurationFile = false;
+    std::string saveconfigurationFileValue = fs;
+
+    if (!saveconfigurationFileValue.empty()) {
+        if (saveconfigurationFileValue.find(".json") == std::string::npos) {
+            saveconfigurationFileValue += ".json";
+        }
+        saveconfigurationFile = true;
+    }
+    if (saveconfigurationFile && view) {
+        auto camera = view->m_ctrl->m_cameras[static_cast<unsigned int>(
+            view->m_ctrl->getCameraInUse())];
+
+        aditof::Status status =
+            camera->saveDepthParamsToJsonFile(saveconfigurationFileValue);
+
+        if (status != aditof::Status::OK) {
+            saveconfigurationFile = false;
+            LOG(INFO) << "Could not save current configuration info to "
+                      << saveconfigurationFileValue << std::endl;
+        } else {
+            LOG(INFO) << "Current configuration info saved to file "
+                      << saveconfigurationFileValue << std::endl;
+            std::strcpy(saveConfigurationPath,
+                        saveconfigurationFileValue.c_str());
+        }
     }
 }
 
@@ -593,12 +702,6 @@ void ADIMainWindow::showDeviceMenu() {
             if (!m_connectedDevices.empty() && m_selectedDevice == -1) {
                 m_selectedDevice = 0;
                 _isOpenDevice = true;
-            }
-
-            if (!m_connectedDevices.empty()) {
-                ImGuiExtensions::ADIComboBox(
-                    "Config", "No Config Files", ImGuiSelectableFlags_None,
-                    m_configFiles, &configSelection, _isOpenDevice);
             }
 
             bool _noConnected = m_connectedDevices.empty();
@@ -616,10 +719,7 @@ void ADIMainWindow::showDeviceMenu() {
                 { // Use block to control the moment when ImGuiExtensions::ButtonColorChanger gets destroyed
                     ImGuiExtensions::ButtonColorChanger colorChanger(
                         ImGuiExtensions::ButtonColor::Green, openAvailable);
-                    if (ImGuiExtensions::ADIButton(
-                            "Open",
-                            /*openAvailable*/ _isOpenDevice &&
-                                m_configFiles.size() > 0) &&
+                    if (ImGuiExtensions::ADIButton("Open", _isOpenDevice) &&
                         0 <= m_selectedDevice) {
                         if (isPlayRecorded) {
                             stopPlayback();
@@ -642,7 +742,20 @@ void ADIMainWindow::showDeviceMenu() {
                 if (initCameraWorker.joinable()) {
                     initCameraWorker.join();
                 }
+                view.reset();
+                RefreshDevices();
             }
+
+            if (ImGuiExtensions::ADICheckbox("Max FPS Network Test (Debug)",
+                                             &m_netLinkTest, _isOpenDevice)) {
+                if (m_netLinkTest) {
+                    m_ipSuffix = ":netlinktest";
+                } else {
+                    m_ipSuffix.clear();
+                }
+                RefreshDevices();
+            }
+
             ImGui::EndMenu();
         }
     }
@@ -684,9 +797,10 @@ void ADIMainWindow::showDeviceMenu() {
         _isOpenDevice = false;
         if (!isPlaying && !isPlayRecorded) {
             if (ImGui::BeginMenu("ToF Camera Options")) {
+                ImGui::Text("Mode:");
                 ImGuiExtensions::ADIComboBox(
-                    "Mode", "Select Mode", ImGuiSelectableFlags_None,
-                    m_cameraModes, &modeSelection, true);
+                    "", "Select Mode", ImGuiSelectableFlags_None,
+                    m_cameraModesDropDown, &modeSelection, true);
 
                 ImGui::NewLine();
                 ImGui::Text("View Options:");
@@ -753,7 +867,7 @@ void ADIMainWindow::RefreshDevices() {
 
     if (!m_skipNetworkCameras) {
         // Add network camera
-        m_system.getCameraList(m_camerasList, m_cameraIp);
+        m_system.getCameraList(m_camerasList, m_cameraIp + m_ipSuffix);
         if (m_camerasList.size() > 0) {
             int index = m_connectedDevices.size();
             m_connectedDevices.emplace_back(index, "ToF Camera" +
@@ -846,7 +960,10 @@ void ADIMainWindow::showPlaybackMenu() {
 
                     if (view == NULL) {
                         view = std::make_shared<adiviewer::ADIView>(
-                            m_controller, "Record Viewer");
+                            std::make_shared<adicontroller::ADIController>(
+                                std::vector<std::shared_ptr<aditof::Camera>>(
+                                    m_camerasList)),
+                            "Record Viewer");
                     }
 
                     view->m_ctrl->startPlayback(path, recordingSeconds);
@@ -935,6 +1052,7 @@ void ADIMainWindow::PlayRecorded() {
 }
 
 void ADIMainWindow::stopPlayCCD() {
+    m_focusedOnce = false;
     captureSeparateEnabled = true;
     captureBlendedEnabled = true;
     setABWinPositionOnce = true;
@@ -951,10 +1069,15 @@ void ADIMainWindow::stopPlayCCD() {
         view->depth_video_data = nullptr;
         view->pointCloud_video_data = nullptr;
     }
+    if (isRecording) {
+        view->m_ctrl->stopRecording();
+        isRecording = false;
+    }
     openGLCleanUp();
     isPlaying = false;
     isPlayRecorded = false;
     firstFrame = 0;
+    frameRecvd = 0;
 }
 
 void ADIMainWindow::openGLCleanUp() {
@@ -970,7 +1093,13 @@ void ADIMainWindow::openGLCleanUp() {
 void ADIMainWindow::showLogWindow(bool *p_open) {
     setWindowSize(mainWindowWidth / dpiScaleFactor, 235.0f);
     setWindowPosition(0, mainWindowHeight / dpiScaleFactor - 235.0f);
-    my_log.Draw("Camera: Log", p_open);
+    ImGuiWindowFlags windowFlags =
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+    my_log.Draw("Camera: Log", p_open, windowFlags);
+
+#ifdef __linux__
+    fseek(input, ftell(input), SEEK_SET);
+#endif
 
     while (fgets(buffer, 512, input)) {
         if (buffer != INIT_LOG_WARNING)
@@ -996,29 +1125,30 @@ void ADIMainWindow::showIniWindow(bool *p_open) {
     static bool metadata = false;
 
     if (isPlaying && ini_params.empty()) {
-        status = getActiveCamera()->getIniParams(ini_params);
+        status = getActiveCamera()->getFrameProcessParams(ini_params);
         if (status != aditof::Status::OK) {
             LOG(ERROR) << "Could not get ini params";
         } else {
-            abThreshMin = ini_params["ab_thresh_min"];
-            abSumThresh = ini_params["ab_sum_thresh"];
-            confThresh = ini_params["conf_thresh"];
-            radialThreshMin = ini_params["radial_thresh_min"];
-            radialThreshMax = ini_params["radial_thresh_max"];
-            if (static_cast<int>(std::round(ini_params["jblf_apply_flag"])) ==
-                1) {
+            abThreshMin = std::stof(ini_params["abThreshMin"]);
+            abSumThresh = std::stof(ini_params["abThreshMin"]);
+            confThresh = std::stof(ini_params["confThresh"]);
+            radialThreshMin = std::stof(ini_params["radialThreshMin"]);
+            radialThreshMax = std::stof(ini_params["radialThreshMax"]);
+            if (static_cast<int>(
+                    std::round(std::stof(ini_params["jblfApplyFlag"]))) == 1) {
                 jblfApplyFlag = true;
             } else {
                 jblfApplyFlag = false;
             }
 
-            jblfWindowSize =
-                static_cast<int>(std::round(ini_params["jblf_window_size"]));
-            jblfGaussianSigma = ini_params["jblf_gaussian_sigma"];
-            jblfExponentialTerm = ini_params["jblf_exponential_term"];
-            jblfMaxEdge = ini_params["jblf_max_edge"];
-            jblfABThreshold = ini_params["jblf_ab_threshold"];
-            headerSize = static_cast<int>(std::round(ini_params["headerSize"]));
+            jblfWindowSize = static_cast<int>(
+                std::round(std::stof(ini_params["jblfWindowSize"])));
+            jblfGaussianSigma = std::stof(ini_params["jblfGaussianSigma"]);
+            jblfExponentialTerm = std::stof(ini_params["jblfExponentialTerm"]);
+            jblfMaxEdge = std::stof(ini_params["jblfMaxEdge"]);
+            jblfABThreshold = std::stof(ini_params["jblfABThreshold"]);
+            headerSize = static_cast<int>(
+                std::round(std::stof(ini_params["headerSize"])));
             if (headerSize == 128) {
                 metadata = true;
             } else {
@@ -1034,38 +1164,42 @@ void ADIMainWindow::showIniWindow(bool *p_open) {
         ImGui::PushItemWidth(140 * dpiScaleFactor);
         ImGui::InputFloat("abThreshMin", &abThreshMin);
         if (abThreshMin < 0 || abThreshMin > 65535) {
-            if (last_ini_params["ab_thresh_min"] != abThreshMin) {
+            if (last_ini_params["abThreshMin"] != std::to_string(abThreshMin)) {
                 LOG(ERROR)
                     << "Invalid abThreshMin value. Valid values [0 - 65535]";
-                last_ini_params["ab_thresh_min"] = abThreshMin;
+                last_ini_params["abThreshMin"] = std::to_string(abThreshMin);
             }
             iniParamWarn("abThreshMin", "Valid value: [0 - 65535]");
         }
         ImGui::InputFloat("abSumThresh", &abSumThresh);
         ImGui::InputFloat("confThresh", &confThresh);
         if (confThresh < 0 || confThresh > 255) {
-            if (last_ini_params["conf_thresh"] != confThresh) {
+            if (last_ini_params["confThresh"] != std::to_string(confThresh)) {
                 LOG(ERROR)
                     << "Invalid confThresh value. Valid values [0 - 255]";
-                last_ini_params["conf_thresh"] = confThresh;
+                last_ini_params["confThresh"] = std::to_string(confThresh);
             }
 
             iniParamWarn("confThresh", "Valid value: [0 - 255]");
         }
         ImGui::InputFloat("radialThreshMin", &radialThreshMin);
         if (radialThreshMin < 0 || radialThreshMin > 65535) {
-            if (last_ini_params["radial_thresh_min"] != radialThreshMin) {
+            if (last_ini_params["radialThreshMin"] !=
+                std::to_string(radialThreshMin)) {
                 LOG(ERROR) << "Invalid radialThreshMin value. Valid values [0 "
                               "- 65535]";
-                last_ini_params["radial_thresh_min"] = radialThreshMin;
+                last_ini_params["radialThreshMin"] =
+                    std::to_string(radialThreshMin);
             }
             iniParamWarn("radialThreshMin", "Valid value:[0 - 65535]");
         }
         if (radialThreshMin >= radialThreshMax) {
-            if (last_ini_params["radial_thresh_min"] != radialThreshMin) {
+            if (last_ini_params["radialThreshMin"] !=
+                std::to_string(radialThreshMin)) {
                 LOG(ERROR)
                     << "radialThreshMin should be less than radialThreshMax";
-                last_ini_params["radial_thresh_min"] = radialThreshMin;
+                last_ini_params["radialThreshMin"] =
+                    std::to_string(radialThreshMin);
             }
             iniParamWarn(
                 "radialThreshMin",
@@ -1073,18 +1207,22 @@ void ADIMainWindow::showIniWindow(bool *p_open) {
         }
         ImGui::InputFloat("radialThreshMax", &radialThreshMax);
         if (radialThreshMax < 0 || radialThreshMax > 65535) {
-            if (last_ini_params["radial_thresh_max"] != radialThreshMax) {
+            if (last_ini_params["radialThreshMax"] !=
+                std::to_string(radialThreshMax)) {
                 LOG(ERROR) << "Invalid radialThreshMax value. Valid values [0 "
                               "- 65535]";
-                last_ini_params["radial_thresh_max"] = radialThreshMax;
+                last_ini_params["radialThreshMax"] =
+                    std::to_string(radialThreshMax);
             }
             iniParamWarn("radialThreshMax", "Valid values [0 - 65535]");
         }
         if (radialThreshMin >= radialThreshMax) {
-            if (last_ini_params["radial_thresh_max"] != radialThreshMax) {
+            if (last_ini_params["radialThreshMax"] !=
+                std::to_string(radialThreshMax)) {
                 LOG(ERROR)
                     << "radialThreshMax should be greater than radialThreshMin";
-                last_ini_params["radial_thresh_max"] = radialThreshMax;
+                last_ini_params["radialThreshMax"] =
+                    std::to_string(radialThreshMax);
             }
             iniParamWarn(
                 "radialThreshMax",
@@ -1093,87 +1231,102 @@ void ADIMainWindow::showIniWindow(bool *p_open) {
         ImGui::Checkbox("jblfApplyFlag", &jblfApplyFlag);
         ImGui::InputInt("jblfWindowSize", &jblfWindowSize);
         if (jblfWindowSize != 3 && jblfWindowSize != 5 && jblfWindowSize != 7) {
-            if (last_ini_params["jblf_window_size"] != jblfWindowSize) {
+            if (last_ini_params["jblfWindowSize"] !=
+                std::to_string(jblfWindowSize)) {
                 LOG(ERROR)
                     << "Invalid jblfWindowSize value. Valid values [3, 5, 7]";
-                last_ini_params["jblf_window_size"] = jblfWindowSize;
+                last_ini_params["jblfWindowSize"] =
+                    std::to_string(jblfWindowSize);
             }
 
             iniParamWarn("jblfWindowSize", "Valid value: [3, 5, 7]");
         }
         ImGui::InputFloat("jblfGaussianSigma", &jblfGaussianSigma);
         if (jblfGaussianSigma < 0 || jblfGaussianSigma > 65535) {
-            if (last_ini_params["jblf_gaussian_sigma"] != jblfGaussianSigma) {
+            if (last_ini_params["jblfGaussianSigma"] !=
+                std::to_string(jblfGaussianSigma)) {
                 LOG(ERROR) << "Invalid jblfGaussianSigma value. Valid values "
                               "[0 - 65535]";
-                last_ini_params["jblf_gaussian_sigma"] = jblfGaussianSigma;
+                last_ini_params["jblfGaussianSigma"] =
+                    std::to_string(jblfGaussianSigma);
             }
             iniParamWarn("jblfGaussianSigma", "Valid value: [0 - 65535]");
         }
         ImGui::InputFloat("jblfExponentialTerm", &jblfExponentialTerm);
         if (jblfExponentialTerm < 0 || jblfExponentialTerm > 255) {
-            if (last_ini_params["jblf_exponential_term"] !=
-                jblfExponentialTerm) {
+            if (last_ini_params["jblfExponentialTerm"] !=
+                std::to_string(jblfExponentialTerm)) {
                 LOG(ERROR)
                     << "Invalid jblfExponentialTerm value. Valid values [0 "
                        "- 255]";
-                last_ini_params["jblf_exponential_term"] = jblfExponentialTerm;
+                last_ini_params["jblfExponentialTerm"] =
+                    std::to_string(jblfExponentialTerm);
             }
             iniParamWarn("jblfExponentialTerm", "Valid value: [0 - 255]");
         }
         ImGui::InputFloat("jblfMaxEdge", &jblfMaxEdge);
         if (jblfMaxEdge < 0 || jblfMaxEdge > 63) {
-            if (last_ini_params["jblf_max_edge"] != jblfMaxEdge) {
+            if (last_ini_params["jblfMaxEdge"] != std::to_string(jblfMaxEdge)) {
                 LOG(ERROR) << "Invalid jblfMaxEdge value. Valid values [0 "
                               "- 63]";
-                last_ini_params["jblf_max_edge"] = jblfMaxEdge;
+                last_ini_params["jblfMaxEdge"] = std::to_string(jblfMaxEdge);
             }
             iniParamWarn("jblfMaxEdge", "Valid value: [0 - 63]");
         }
         ImGui::InputFloat("jblfABThreshold", &jblfABThreshold);
         if (jblfABThreshold < 0 || jblfABThreshold > 131071) {
-            if (last_ini_params["jblf_ab_threshold"] != jblfABThreshold) {
+            if (last_ini_params["jblfABThreshold"] !=
+                std::to_string(jblfABThreshold)) {
                 LOG(ERROR) << "Invalid jblfABThreshold value. Valid values [0 "
                               "- 131071]";
-                last_ini_params["jblf_ab_threshold"] = jblfABThreshold;
+                last_ini_params["jblfABThreshold"] =
+                    std::to_string(jblfABThreshold);
             }
             iniParamWarn("jblfABThreshold", "Valid value: [0 - 131071]");
         }
         ImGui::Checkbox("Metadata Over AB", &metadata);
 
         // modify ini params
-        modified_ini_params["ab_thresh_min"] = abThreshMin;
-        modified_ini_params["ab_sum_thresh"] = abSumThresh;
-        modified_ini_params["conf_thresh"] = confThresh;
-        modified_ini_params["radial_thresh_min"] = radialThreshMin;
-        modified_ini_params["radial_thresh_max"] = radialThreshMax;
+        modified_ini_params["abThreshMin"] = std::to_string(abThreshMin);
+        modified_ini_params["abSumThresh"] = std::to_string(abSumThresh);
+        modified_ini_params["confThresh"] = std::to_string(confThresh);
+        modified_ini_params["radialThreshMin"] =
+            std::to_string(radialThreshMin);
+        modified_ini_params["radialThreshMax"] =
+            std::to_string(radialThreshMax);
         if (jblfApplyFlag) {
-            modified_ini_params["jblf_apply_flag"] = 1;
+            modified_ini_params["jblfApplyFlag"] = std::to_string(1);
         } else {
-            modified_ini_params["jblf_apply_flag"] = 0;
+            modified_ini_params["jblfApplyFlag"] = std::to_string(0);
         }
-        modified_ini_params["jblf_window_size"] = jblfWindowSize;
-        modified_ini_params["jblf_gaussian_sigma"] = jblfGaussianSigma;
-        modified_ini_params["jblf_exponential_term"] = jblfExponentialTerm;
-        modified_ini_params["jblf_max_edge"] = jblfMaxEdge;
-        modified_ini_params["jblf_ab_threshold"] = jblfABThreshold;
+        modified_ini_params["jblfWindowSize"] = std::to_string(jblfWindowSize);
+        modified_ini_params["jblfGaussianSigma"] =
+            std::to_string(jblfGaussianSigma);
+        modified_ini_params["jblfExponentialTerm"] =
+            std::to_string(jblfExponentialTerm);
+        modified_ini_params["jblfMaxEdge"] = std::to_string(jblfMaxEdge);
+        modified_ini_params["jblfABThreshold"] =
+            std::to_string(jblfABThreshold);
 
         // keep ini param input from last time to skip repetitve error log messages
-        last_ini_params["ab_thresh_min"] = abThreshMin;
-        last_ini_params["conf_thresh"] = confThresh;
-        last_ini_params["radial_thresh_min"] = radialThreshMin;
-        last_ini_params["radial_thresh_max"] = radialThreshMax;
-        last_ini_params["jblf_window_size"] = jblfWindowSize;
-        last_ini_params["jblf_gaussian_sigma"] = jblfGaussianSigma;
-        last_ini_params["jblf_exponential_term"] = jblfExponentialTerm;
-        last_ini_params["jblf_max_edge"] = jblfMaxEdge;
-        last_ini_params["jblf_ab_threshold"] = jblfABThreshold;
+        last_ini_params["abThreshMin"] = std::to_string(abThreshMin);
+        last_ini_params["confThresh"] = std::to_string(confThresh);
+        last_ini_params["radialThreshMin"] = std::to_string(radialThreshMin);
+        last_ini_params["radialThreshMax"] = std::to_string(radialThreshMax);
+        last_ini_params["jblfWindowSize"] = std::to_string(jblfWindowSize);
+        last_ini_params["jblfGaussianSigma"] =
+            std::to_string(jblfGaussianSigma);
+        last_ini_params["jblfExponentialTerm"] =
+            std::to_string(jblfExponentialTerm);
+        last_ini_params["jblfMaxEdge"] = std::to_string(jblfMaxEdge);
+        last_ini_params["jblfABThreshold"] = std::to_string(jblfABThreshold);
 
         if (ImGui::Button("Modify")) {
             // stop streaming
             {
                 isPlaying = false;
                 isPlayRecorded = false;
+                firstFrame = 0;
                 frameRecvd = 0;
                 stopPlayCCD();
                 if (isRecording) {
@@ -1197,6 +1350,7 @@ void ADIMainWindow::showIniWindow(bool *p_open) {
             {
                 isPlaying = false;
                 isPlayRecorded = false;
+                firstFrame = 0;
                 frameRecvd = 0;
                 stopPlayCCD();
                 if (isRecording) {
@@ -1225,13 +1379,13 @@ void ADIMainWindow::InitCamera() {
     }
 
     std::string version = aditof::getApiVersion();
-    //my_log.AddLog("Preparing camera. Please wait...\n");
     LOG(INFO) << "Preparing camera. Please wait...\n";
-    m_controller =
-        std::make_shared<adicontroller::ADIController>(m_camerasList);
-
-    view = std::make_shared<adiviewer::ADIView>(m_controller,
-                                                "ToFViewer " + version);
+    view = std::make_shared<adiviewer::ADIView>(
+        std::make_shared<adicontroller::ADIController>(m_camerasList),
+        "ToFViewer " + version);
+    m_camerasList.clear();
+    _cameraModes.clear();
+    m_cameraModesDropDown.clear();
 
     aditof::Status status = aditof::Status::OK;
     auto camera = getActiveCamera(); //already initialized on constructor
@@ -1241,7 +1395,7 @@ void ADIMainWindow::InitCamera() {
         return;
     }
 
-    status = camera->initialize(m_configFiles[configSelection].second);
+    status = camera->initialize("");
     if (status != aditof::Status::OK) {
         LOG(ERROR) << "Could not initialize camera!";
         return;
@@ -1254,132 +1408,51 @@ void ADIMainWindow::InitCamera() {
     LOG(INFO) << "Kernel version: " << cameraDetails.kernelVersion;
     LOG(INFO) << "U-Boot version: " << cameraDetails.uBootVersion;
 
-    //Parse config.json
-    std::ifstream ifs(m_configFiles[configSelection].second);
-    std::string content((std::istreambuf_iterator<char>(ifs)),
-                        (std::istreambuf_iterator<char>()));
-    std::vector<std::pair<std::string, int32_t>> device_settings;
-    cJSON *config_json = cJSON_Parse(content.c_str());
+    camera->getAvailableModes(_cameraModes);
+    sort(_cameraModes.begin(), _cameraModes.end());
 
-    if (config_json != NULL) {
-        // Get GUI MAX_RANGE file location
-        const cJSON *json_min_max_range =
-            cJSON_GetObjectItemCaseSensitive(config_json, "MAX_RANGE");
-        if (cJSON_IsString(json_min_max_range) &&
-            (json_min_max_range->valuestring != NULL)) {
-            // Set Max range
-            view->maxRange = std::stoi(json_min_max_range->valuestring);
-        }
-        //Get GUI MIN_RANGE file location
-        json_min_max_range =
-            cJSON_GetObjectItemCaseSensitive(config_json, "MIN_RANGE");
-        if (cJSON_IsString(json_min_max_range) &&
-            (json_min_max_range->valuestring != NULL)) {
-            // Set Min range
-            view->minRange = std::stoi(json_min_max_range->valuestring);
-        }
-        //Get GUI AB_MAX_RANGE and AB_MIN_RANGE file location
-        json_min_max_range =
-            cJSON_GetObjectItemCaseSensitive(config_json, "AB_MAX_RANGE");
-        if (cJSON_IsString(json_min_max_range) &&
-            (json_min_max_range->valuestring != NULL)) {
-            uint32_t value =
-                (uint32_t)std::stoi(json_min_max_range->valuestring);
-            view->setABMaxRange(value);
-            view->setUserABMaxState(true);
-        } else {
-            view->setUserABMaxState(false);
-        }
-        json_min_max_range =
-            cJSON_GetObjectItemCaseSensitive(config_json, "AB_MIN_RANGE");
-        if (cJSON_IsString(json_min_max_range) &&
-            (json_min_max_range->valuestring != NULL)) {
-            uint32_t value =
-                (uint32_t)std::stoi(json_min_max_range->valuestring);
-            view->setABMinRange(value);
-            view->setUserABMinState(true);
-        } else {
-            view->setUserABMinState(false);
-        }
-        //Get available modes
-        json_min_max_range =
-            cJSON_GetObjectItemCaseSensitive(config_json, "modes");
-        if (cJSON_IsString(json_min_max_range) &&
-            (json_min_max_range->valuestring != NULL)) {
-            // Add to _cameraModes the available modes
-            std::string cameraElements =
-                static_cast<std::string>(json_min_max_range->valuestring);
-            std::string delimiter = ",";
-            size_t position = 0;
-            std::string token = "";
-            cameraElements.erase(
-                std::remove(cameraElements.begin(), cameraElements.end(), ' '),
-                cameraElements
-                    .end()); //Cleanup the string to eliminate blank spaces.
-            while ((position = cameraElements.find(delimiter)) !=
-                   std::string::npos) {
-                _cameraModes.emplace_back(cameraElements.substr(0, position));
-                std::cout << token << std::endl;
-                cameraElements.erase(0, position + delimiter.length());
-            }
-            //Last element should go here:
-            _cameraModes.emplace_back(cameraElements.substr(0, position));
-            _usesExternalModeDefinition = true;
-
-        } else {
-            _usesExternalModeDefinition = false;
-        }
-
-        cJSON_Delete(config_json);
-    }
-    if (!ifs.fail()) {
-        ifs.close();
-    }
-
-    if (!_usesExternalModeDefinition)
-        camera->getAvailableFrameTypes(_cameraModes);
-
-    int modeIndex = 0;
     for (int i = 0; i < _cameraModes.size(); ++i) {
-#ifndef ENBABLE_PASSIVE_IR
-        if ("pcm" == _cameraModes.at(i)) {
-            continue;
+        aditof::DepthSensorModeDetails modeDetails;
+
+        auto sensor = camera->getSensor();
+        sensor->getModeDetails(_cameraModes.at(i), modeDetails);
+
+        std::string s = std::to_string(_cameraModes.at(i));
+        s = s + " (W: " + std::to_string(modeDetails.baseResolutionWidth) +
+            " H: " + std::to_string(modeDetails.baseResolutionHeight) + ") ";
+        if (!modeDetails.isPCM) {
+            s = s +
+                "Frequencies: " + std::to_string(modeDetails.numberOfPhases);
+        } else {
+            s = s + "PCM";
         }
-#endif
-        modeSelection = modeIndex;
-        m_cameraModes.emplace_back(modeIndex++, _cameraModes.at(i));
+        m_cameraModesDropDown.emplace_back(modeDetails.modeNumber, s);
+    }
+
+    for (int i = 0; i < _cameraModes.size(); i++) {
+        m_cameraModes.emplace_back(i, _cameraModes.at(i));
     }
 
     cameraWorkerDone = true;
 }
 
-void ADIMainWindow::prepareCamera(std::string mode) {
+void ADIMainWindow::prepareCamera(uint8_t mode) {
     aditof::Status status = aditof::Status::OK;
     std::vector<aditof::FrameDetails> frameTypes;
 
-    if (mode.empty()) {
-        my_log.AddLog("Error: Invalid camera mode!\n");
-        return;
-    }
-
-    status = getActiveCamera()->setFrameType(mode);
+    status = getActiveCamera()->setMode(mode);
     if (status != aditof::Status::OK) {
-        my_log.AddLog("Could not set camera mode!");
+        LOG(ERROR) << "Could not set camera mode!";
         return;
     }
 
     if (mode == last_mode) {
         if (!modified_ini_params.empty()) {
             if (use_modified_ini_params) {
-                status = getActiveCamera()->setIniParams(modified_ini_params);
-                if (status != aditof::Status::OK) {
-                    LOG(ERROR)
-                        << "Could not set ini params for Depth Compute Library";
-                }
-                status = getActiveCamera()->adsd3500SetIniParams(
+                status = getActiveCamera()->setFrameProcessParams(
                     modified_ini_params);
                 if (status != aditof::Status::OK) {
-                    LOG(ERROR) << "Could not set ini params for Adsd3500";
+                    LOG(ERROR) << "Could not set ini params";
                 } else {
                     LOG(INFO) << "Using user defined ini parameters.";
                     use_modified_ini_params = false;
@@ -1399,11 +1472,22 @@ void ADIMainWindow::prepareCamera(std::string mode) {
     status = getActiveCamera()->getDetails(camDetails);
     int totalCaptures = camDetails.frameType.totalCaptures;
 
-    if (mode == last_mode) {
-        status = getActiveCamera()->adsd3500GetFrameRate(expectedFPS);
+    status = getActiveCamera()->adsd3500GetFrameRate(expectedFPS);
+
+    if (m_max_frame_rate != 0 && expectedFPS > m_max_frame_rate) {
+        auto status = getActiveCamera()->adsd3500SetFrameRate(m_max_frame_rate);
+        if (status != aditof::Status::OK) {
+            LOG(ERROR) << "Could not set frame rate!";
+        } else {
+            LOG(INFO) << "Frame rate set to: " << m_max_frame_rate;
+        }
     }
 
-    view->m_ctrl->m_recorder->m_frameDetails.totalCaptures = totalCaptures;
+    status = getActiveCamera()->adsd3500GetFrameRate(expectedFPS);
+
+    aditof::FrameDetails tmp = view->m_ctrl->m_recorder->getFrameDetails();
+    tmp.totalCaptures = totalCaptures;
+    view->m_ctrl->m_recorder->setFrameDetails(tmp);
 
     if (!view->getUserABMaxState()) {
         std::string value;
@@ -1418,8 +1502,9 @@ void ADIMainWindow::prepareCamera(std::string mode) {
         return;
     }
 
-    my_log.AddLog("Camera ready.\n");
+    LOG(INFO) << "Camera ready.";
     cameraWorkerDone = true;
+    tofImagePosY = -1.0f;
 }
 
 void ADIMainWindow::PlayCCD(int modeSelect, int viewSelect) {
@@ -1440,7 +1525,7 @@ void ADIMainWindow::PlayCCD(int modeSelect, int viewSelect) {
                 view->m_ctrl->StopCapture();
             }
 
-            prepareCamera(m_cameraModes[modeSelection].second);
+            prepareCamera(modeSelect);
             openGLCleanUp();
             initOpenGLABTexture();
             initOpenGLDepthTexture();
@@ -1520,10 +1605,15 @@ void ADIMainWindow::displayInfoWindow(ImGuiWindowFlags overlayFlags) {
 
     if (ImGui::Begin("Information Window", nullptr,
                      overlayFlags | ImGuiWindowFlags_NoTitleBar)) {
-        char formattedIP[20];
+
+        if (!m_focusedOnce) {
+            ImGui::SetWindowFocus();
+            m_focusedOnce = true;
+        }
+        std::string formattedIP;
         for (int i = 0; i < m_cameraIp.length(); i++)
-            formattedIP[i] = toupper(m_cameraIp[i]);
-        ImGui::Text(" Camera %s", formattedIP);
+            formattedIP += toupper(m_cameraIp[i]);
+        ImGui::Text(" Camera %s", formattedIP.c_str());
         ImGui::Text(" Rotate: ");
         ImGui::SameLine();
         bool rotate = ImGui::Button("+");
@@ -1571,32 +1661,34 @@ void ADIMainWindow::displayInfoWindow(ImGuiWindowFlags overlayFlags) {
                 frameRecvd++;
             }
 
+            CameraDetails cameraDetails;
+            camera->getDetails(cameraDetails);
+            uint8_t camera_mode = cameraDetails.mode;
+
+            ImGui::Text(" Camera Mode: %d", camera_mode);
             ImGui::Text(" Current FPS: %i", fps);
             if (expectedFPS) {
                 ImGui::SameLine();
                 ImGui::Text(" | Expected FPS: %i", expectedFPS);
             }
 
-            CameraDetails cameraDetails;
-            camera->getDetails(cameraDetails);
-            std::string camera_mode = cameraDetails.mode;
-            if (camera_mode != "pcm-native") {
+            if (camera_mode != 4) { // 4 - pcm-native
                 Metadata metadata;
                 Status status = frame->getMetadataStruct(metadata);
                 if (status != Status::OK) {
                     LOG(ERROR) << "Failed to get frame metadata.";
                 } else {
-                    int32_t frameNum = (metadata.frameNumber);
+                    uint32_t frameNum = (metadata.frameNumber);
                     if (!firstFrame) {
                         firstFrame = frameNum;
                     }
                     int32_t sensorTemp = (metadata.sensorTemperature);
                     int32_t laserTemp = (metadata.laserTemperature);
-                    uint32_t totalFrames = frameNum - firstFrame + 1;
-                    uint32_t frameLost = totalFrames - frameRecvd;
-                    ImGui::Text(" Number of frames lost: %i", frameLost);
-                    ImGui::SameLine();
-                    ImGui::Text(" | Number of frames received: %i", frameRecvd);
+                    //uint32_t totalFrames = frameNum - firstFrame + 1;
+                    //uint32_t frameLost = totalFrames - frameRecvd;
+                    //ImGui::Text(" Number of frames lost: %u", frameLost);
+                    //ImGui::SameLine();
+                    //ImGui::Text(" | Number of frames received: %u", frameRecvd);
                     ImGui::Text(" Laser Temperature: %iC", laserTemp);
                     ImGui::SameLine();
                     ImGui::Text(" | Sensor Temperature: %iC", sensorTemp);
@@ -1648,6 +1740,7 @@ void ADIMainWindow::displayInfoWindow(ImGuiWindowFlags overlayFlags) {
             }
         }
         if (isPlayRecorded) {
+#if 0  // TODO: Fix. Temporarily disabled
             std::string playbackButtonText =
                 isPlayRecordPaused ? "Paused" : "Pause";
             float recordPlaybackColor = customColorPause;
@@ -1672,7 +1765,7 @@ void ADIMainWindow::displayInfoWindow(ImGuiWindowFlags overlayFlags) {
                         LOG(INFO) << "Stream has been paused...";
                     } else {
                         if (isPlayRecordDone) {
-                            view->m_ctrl->m_recorder->currentPBPos = 0;
+                            view->m_ctrl->m_recorder->setCurrentPBPos(0);
                             isPlayRecordDone = false;
                         }
                         view->m_ctrl->pausePlayback(false);
@@ -1681,10 +1774,12 @@ void ADIMainWindow::displayInfoWindow(ImGuiWindowFlags overlayFlags) {
                     view->m_ctrl->playbackPaused();
                 }
             }
+#endif //0
             ImGui::SameLine();
-            if (view != nullptr && view->m_ctrl->m_recorder->_stopPlayback) {
+            if (view != nullptr &&
+                view->m_ctrl->m_recorder->getStopPlayback()) {
                 stopPlayback();
-                view->m_ctrl->m_recorder->_stopPlayback = false;
+                view->m_ctrl->m_recorder->setStopPlayback(false);
             }
 
             { // Use block to control the moment when ImGuiExtensions::ButtonColorChanger gets destroyed
@@ -1695,23 +1790,16 @@ void ADIMainWindow::displayInfoWindow(ImGuiWindowFlags overlayFlags) {
                     stopPlayback();
                 }
             }
-            rawSeeker =
-                (view->m_ctrl->m_recorder->currentPBPos) /
-                (((int)view->m_ctrl->m_recorder->m_frameDetails.height) *
-                     ((int)view->m_ctrl->m_recorder->m_frameDetails.width) *
-                     (view->m_ctrl->m_recorder->totalBits) +
-                 EMBED_HDR_LENGTH);
 
-            ImGuiExtensions::ADISliderInt(
-                "Progress", &rawSeeker, 0,
-                (view->m_ctrl->m_recorder->m_numberOfFrames) - 1, "%d", true);
-            view->m_ctrl->m_recorder->currentPBPos =
-                size_t(rawSeeker) *
-                    (((int)view->m_ctrl->m_recorder->m_frameDetails.height) *
-                         ((int)view->m_ctrl->m_recorder->m_frameDetails.width) *
-                         (view->m_ctrl->m_recorder->totalBits) +
-                     EMBED_HDR_LENGTH) +
-                view->m_ctrl->m_recorder->m_sizeOfHeader;
+            uint32_t totalFrames =
+                view->m_ctrl->m_recorder->getNumberOfFrames();
+
+            rawSeeker = view->m_ctrl->m_recorder->getPlaybackFrameNumber();
+
+            ImGuiExtensions::ADISliderInt("Frame #", &rawSeeker, 0,
+                                          totalFrames - 1, "%d", true);
+
+            view->m_ctrl->m_recorder->setPlaybackFrameNumber(rawSeeker);
         }
     }
     ImGui::End();
@@ -1750,30 +1838,35 @@ void ADIMainWindow::displayActiveBrightnessWindow(
          dictWinPosition["info"][1] + dictWinPosition["info"][3], size.x,
          size.y});
     setWindowPosition(dictWinPosition["ab"][0], dictWinPosition["ab"][1]);
-    setWindowSize(dictWinPosition["ab"][2] + 40, dictWinPosition["ab"][3] + 40);
+    setWindowSize(dictWinPosition["ab"][2] + 40,
+                  dictWinPosition["ab"][3] + 130);
 
     if (ImGui::Begin("Active Brightness Window", nullptr, overlayFlags)) {
-        CaptureABVideo();
 
         bool logImage = view->getLogImage();
-        ImGui::Checkbox("Log Image", &logImage);
-        view->setLogImage(logImage);
-        ImGui::SameLine();
         bool autoScale = view->getAutoScale();
+
+        ImGui::SameLine();
         ImGui::Checkbox("Auto-scale", &autoScale);
+
+        if (!autoScale && logImage) {
+            logImage = false;
+        } else if (autoScale) {
+            ImGui::SameLine();
+            ImGui::Checkbox("Log Image", &logImage);
+        }
+        view->setLogImage(logImage);
         view->setAutoScale(autoScale);
 
-        // fix a y offset caused by the checkbox
-        ImVec2 imageStartPos = ImGui::GetCursorScreenPos();
-        int y_offset = (_isHighDPI) ? 46 : 23;
-        imageStartPos.y -= y_offset;
+        tofImagePosY = ImGui::GetCursorPosY();
 
+        CaptureABVideo();
         ImVec2 hoveredImagePixel = InvalidHoveredPixel;
-        GetHoveredImagePix(hoveredImagePixel, imageStartPos,
+        GetHoveredImagePix(hoveredImagePixel, ImGui::GetCursorScreenPos(),
                            ImGui::GetIO().MousePos, displayABDimensions);
         RenderInfoPane(hoveredImagePixel, view->ab_video_data, view->frameWidth,
                        ImGui::IsWindowHovered(),
-                       ADI_Image_Format_t::ADI_IMAGE_FORMAT_AB16, " ");
+                       ADI_Image_Format_t::ADI_IMAGE_FORMAT_AB16, "mm");
     }
 
     ImGui::End();
@@ -1805,11 +1898,23 @@ void ADIMainWindow::displayDepthWindow(ImGuiWindowFlags overlayFlags) {
     setWindowPosition(dictWinPosition["depth"][0] + 40,
                       dictWinPosition["depth"][1]);
     setWindowSize(dictWinPosition["depth"][2] + 40,
-                  dictWinPosition["depth"][3] + 40);
+                  dictWinPosition["depth"][3] + 130);
 
-    std::string title =
-        "Depth"; //std::format("Depth: {} x {}", static_cast<uint32_t>(view->frameWidth), static_cast<uint32_t>(view->frameWidth));
+    std::string title = "Depth Window";
     if (ImGui::Begin(title.c_str(), nullptr, overlayFlags)) {
+
+        if (!m_focusedOnce) {
+            ImGui::SetWindowFocus();
+            m_focusedOnce = true;
+        }
+
+        if (tofImagePosY != -1.0f) {
+            ImGui::SetCursorPosY(tofImagePosY);
+        } else {
+            tofImagePosY = ImGui::GetCursorPosY();
+        }
+
+        CaptureDepthVideo();
         ImVec2 hoveredImagePixel = InvalidHoveredPixel;
         GetHoveredImagePix(hoveredImagePixel, ImGui::GetCursorScreenPos(),
                            ImGui::GetIO().MousePos, displayDepthDimensions);
@@ -1818,7 +1923,6 @@ void ADIMainWindow::displayDepthWindow(ImGuiWindowFlags overlayFlags) {
                        ADI_Image_Format_t::ADI_IMAGE_FORMAT_DEPTH16, "mm");
     }
 
-    CaptureDepthVideo();
     ImGui::End();
 }
 
@@ -1841,22 +1945,26 @@ void ADIMainWindow::displayPointCloudWindow(ImGuiWindowFlags overlayFlags) {
          size.y});
 
     setWindowPosition(dictWinPosition["pc"][0], dictWinPosition["pc"][1]);
-    setWindowSize(dictWinPosition["pc"][2] + 40, dictWinPosition["pc"][3] + 40);
+    setWindowSize(dictWinPosition["pc"][2] + 40,
+                  dictWinPosition["pc"][3] + 130);
 
     if (ImGui::Begin("Point Cloud Window", nullptr, overlayFlags)) {
+
+        if (tofImagePosY != -1.0f) {
+            ImGui::SetCursorPosY(tofImagePosY);
+        }
+
         CapturePointCloudVideo();
+
+        ImGui::SameLine();
         ImGuiExtensions::ADISliderInt("", &pointSize, 1, 10,
                                       "Point Size: %d px");
+
         ImGui::SameLine();
         if (ImGuiExtensions::ADIButton("Reset", true)) {
             pointCloudReset();
         }
     }
-
-    //TODO:
-    //Create a color bar for Point Cloud
-    /*createColorBar({ (float)(view->frameWidth * 1.15), 150.0f },
-		{ 200.0, 750.0 });*/
     ImGui::End();
 }
 
@@ -1964,7 +2072,6 @@ void ADIMainWindow::preparePointCloudVertices(unsigned int &vbo,
 }
 
 void ADIMainWindow::initOpenGLPointCloudTexture() {
-    glEnable(GL_DEPTH_TEST);
     glEnable(GL_PROGRAM_POINT_SIZE); //Enable point size feature
 
     constexpr char const pointCloudVertexShader[] =
@@ -1981,7 +2088,9 @@ void ADIMainWindow::initOpenGLPointCloudTexture() {
 
 				void main()
 				{
-					gl_Position = projection * view * model * vec4(aPos, 1.0);
+                    vec3 flippedPos = aPos;
+                    flippedPos.x = -flippedPos.x; // Flip horizontally
+					gl_Position = projection * view * model * vec4(flippedPos, 1.0);
 					color_based_on_position = vec4(hsvColor, 1.0);
 				}
 				)";
@@ -2030,9 +2139,31 @@ void ADIMainWindow::initOpenGLPointCloudTexture() {
                  GL_RGB, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                            pointCloud_video_texture, 0);
+
+    glGenTextures(1, &m_gl_pc_depthTex);
+    glBindTexture(GL_TEXTURE_2D, m_gl_pc_depthTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, mainWindowWidth,
+                 mainWindowHeight, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                           m_gl_pc_depthTex, 0);
+
+    GLenum drawBuffers[1] = {GL_COLOR_ATTACHMENT0};
+    glDrawBuffers(1, drawBuffers);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "FBO incomplete!\n";
+        return;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    pointCloudReset();
 }
 
 void ADIMainWindow::synchronizeDepthABVideo() {
@@ -2119,8 +2250,10 @@ void ADIMainWindow::GetHoveredImagePix(ImVec2 &hoveredImagePixel,
         std::swap(_sourceDepthImageDimensions.x, _sourceDepthImageDimensions.y);
     }
 
+    // Do not show out values when cursor is not over image - ie out of bounds.
     if (hoveredUIPixel.x > _displayDepthDimensions.x ||
-        hoveredUIPixel.y > _displayDepthDimensions.y) {
+        hoveredUIPixel.y > _displayDepthDimensions.y || hoveredUIPixel.x < 0 ||
+        hoveredUIPixel.y < 0) {
         hoveredImagePixel.x = -1;
         hoveredImagePixel.y = -1;
         return;
@@ -2281,7 +2414,6 @@ void ADIMainWindow::CaptureDepthVideo() {
             ImVec2(dictWinPosition["depth"][2], dictWinPosition["depth"][3]),
             ImVec2(_displayDepthDimensions.x, _displayDepthDimensions.y),
             rotationangleradians);
-        //ImGui::Image((void*)(intptr_t)depth_video_texture, displayDepthDimensions);
     }
 }
 
@@ -2300,13 +2432,10 @@ void ADIMainWindow::CaptureABVideo() {
             std::swap(_displayABDimensions.x, _displayABDimensions.y);
         }
 
-        ImVec2 p = ImGui::GetCursorScreenPos();
         ImageRotated((ImTextureID)ab_video_texture,
                      ImVec2(dictWinPosition["ab"][2], dictWinPosition["ab"][3]),
                      ImVec2(_displayABDimensions.x, _displayABDimensions.y),
                      rotationangleradians);
-        //ImGui::Image((void*)(intptr_t)ab_video_texture, displayABDimensions);
-        size_t bb = 0;
     }
 }
 
@@ -2323,6 +2452,7 @@ void ADIMainWindow::CapturePointCloudVideo() {
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
     glPointSize(pointSize);
 
     // draw our Image
@@ -2353,32 +2483,48 @@ void ADIMainWindow::CapturePointCloudVideo() {
                   _displayPointCloudDimensions.y);
     }
 
-    ImVec2 p = ImGui::GetCursorScreenPos();
     ImageRotated(
         (ImTextureID)pointCloud_video_texture,
         ImVec2(dictWinPosition["pc"][2], dictWinPosition["pc"][3]),
         ImVec2(_displayPointCloudDimensions.x, _displayPointCloudDimensions.y),
         rotationangleradians);
-    //ImGui::Image((void*)(intptr_t)pointCloud_video_texture, displayPointCloudDimensions);
     glDeleteVertexArrays(1, &view->vertexArrayObject);
     glDeleteBuffers(1, &view->vertexBufferObject);
+    glDisable(GL_DEPTH_TEST);
 }
 
 void ADIMainWindow::pointCloudReset() {
-    mat4x4_identity(m_view);
-    mat4x4_identity(m_projection);
-    mat4x4_identity(m_model);
-    deltaTime = 0;
-    lastFrame = 0;
-    fov = 8.0f;
-    yaw = -90.0f;
-    pitch = 0.0f;
+
+    const mat4x4 m_view_default = {
+        {1.0f, 0.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f, 1.0f},
+        {-0.0213157870, -0.00631578919, -3.0f, 1.0f}};
+
+    const mat4x4 m_projection_default = {
+        {9.51436424, 0.00000000, 0.00000000, 0.00000000},
+        {0.00000000, 9.51436424, 0.00000000, 0.00000000},
+        {0.00000000, 0.00000000, -1.00200200, -1.00000000},
+        {0.00000000, 0.00000000, -0.200200200, 0.00000000}};
+
+    const mat4x4 m_model_default = {
+        {-0.989992976, 0.0140884947, -0.140415087, 0.00000000},
+        {0.00000000, 0.995004535, 0.0998334810, 0.00000000},
+        {0.141119987, 0.0988343805, -0.985047400, 0.00000000},
+        {0.00000000, 0.00000000, 0.00000000, 1.00000000}};
+
+    memcpy(m_view, m_view_default, sizeof(m_view));
+    memcpy(m_projection, m_projection_default, sizeof(m_projection));
+    memcpy(m_model, m_model_default, sizeof(m_model));
+
+    deltaTime = 0.1;
+    fov = 12.0f;
     view->Max_X = 6000.0;
     view->Max_Y = 6000.0;
     view->Max_Z = 6000.0;
 
-    cameraPos[0] = 0.0f;
-    cameraPos[1] = 0.0f;
+    cameraPos[0] = 0.0213157870f;
+    cameraPos[1] = 0.00631578919f;
     cameraPos[2] = 3.0f;
     cameraFront[0] = 0.0;
     cameraFront[1] = 0.0;
@@ -2623,28 +2769,28 @@ int ADIMainWindow::saveIniFile() {
     outputFile.open(filename);
 
     if (outputFile.is_open()) {
-        outputFile << "abThreshMin=" << modified_ini_params["ab_thresh_min"]
+        outputFile << "abThreshMin=" << modified_ini_params["abThreshMin"]
                    << "\n";
-        outputFile << "abSumThresh=" << modified_ini_params["ab_sum_thresh"]
+        outputFile << "abSumThresh=" << modified_ini_params["abThreshMin"]
                    << "\n";
-        outputFile << "confThresh=" << modified_ini_params["conf_thresh"]
+        outputFile << "confThresh=" << modified_ini_params["confThresh"]
                    << "\n";
         outputFile << "radialThreshMin="
-                   << modified_ini_params["radial_thresh_min"] << "\n";
+                   << modified_ini_params["radialThreshMin"] << "\n";
         outputFile << "radialThreshMax="
-                   << modified_ini_params["radial_thresh_max"] << "\n";
-        outputFile << "jblfApplyFlag=" << modified_ini_params["jblf_apply_flag"]
+                   << modified_ini_params["radialThreshMax"] << "\n";
+        outputFile << "jblfApplyFlag=" << modified_ini_params["jblfApplyFlag"]
                    << "\n";
-        outputFile << "jblfWindowSize="
-                   << modified_ini_params["jblf_window_size"] << "\n";
+        outputFile << "jblfWindowSize=" << modified_ini_params["jblfWindowSize"]
+                   << "\n";
         outputFile << "jblfGaussianSigma="
-                   << modified_ini_params["jblf_gaussian_sigma"] << "\n";
+                   << modified_ini_params["jblfGaussianSigma"] << "\n";
         outputFile << "jblfExponentialTerm="
-                   << modified_ini_params["jblf_exponential_term"] << "\n";
-        outputFile << "jblfMaxEdge=" << modified_ini_params["jblf_max_edge"]
+                   << modified_ini_params["jblfExponentialTerm"] << "\n";
+        outputFile << "jblfMaxEdge=" << modified_ini_params["jblfMaxEdge"]
                    << "\n";
         outputFile << "jblfABThreshold="
-                   << modified_ini_params["jblf_ab_threshold"];
+                   << modified_ini_params["jblfABThreshold"];
 
         outputFile.close();
         LOG(INFO) << "Modified parameters have been written to ini file: "

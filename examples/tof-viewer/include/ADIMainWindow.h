@@ -72,8 +72,9 @@ struct AppLog {
             ScrollToBottom = true;
     }
 
-    void Draw(const char *title, bool *p_open = NULL) {
-        if (!ImGui::Begin(title, p_open)) {
+    void Draw(const char *title, bool *p_open = NULL,
+              ImGuiWindowFlags windowFlags = NULL) {
+        if (!ImGui::Begin(title, p_open, windowFlags)) {
             ImGui::End();
             return;
         }
@@ -280,6 +281,7 @@ class ADIMainWindow {
     unsigned int framebuffer;
     bool mouseDown = false;
     bool m_saveBinaryFormatTmp = false;
+    float tofImagePosY;
 
     /**
 		* @brief Virtual Sphere
@@ -323,6 +325,8 @@ class ADIMainWindow {
     bool m_callbackInitialized = false;
     int frameCounter = 0;
     int fps = 0;
+    bool m_netLinkTest = false;
+    std::string m_ipSuffix;
 
     /**
 		* @brief Rotation of an ImGui texture.
@@ -361,6 +365,9 @@ class ADIMainWindow {
     void showMainMenu();
 
     void showRecordMenu();
+
+    void showLoadAdsdParamsMenu();
+    void showSaveAdsdParamsMenu();
 
     /**
 		* @brief	Open Device menu will give you the information of
@@ -492,7 +499,7 @@ class ADIMainWindow {
 		* @brief			Prepares the camera with the selected mode
 		* @param	mode	Camera mode
 		*/
-    void prepareCamera(std::string mode);
+    void prepareCamera(uint8_t mode);
 
     /**
 		* @brief Displays the Information Window
@@ -535,6 +542,8 @@ class ADIMainWindow {
     */
     void iniParamWarn(std::string variable, std::string validVal);
 
+    void CustomizeMenus();
+
     /**
      * @brief Return the current selected camera object
     */
@@ -543,7 +552,7 @@ class ADIMainWindow {
     aditof::System m_system;
     std::vector<std::shared_ptr<aditof::Camera>> m_camerasList;
 
-    std::shared_ptr<adicontroller::ADIController> m_controller;
+    bool m_focusedOnce = false;
 
     bool m_skipNetworkCameras;
     std::string m_cameraIp;
@@ -555,8 +564,9 @@ class ADIMainWindow {
     bool captureSeparateEnabled = true;
     bool captureBlendedEnabled = true;
     const ImVec2 InvalidHoveredPixel = ImVec2(-1, -1);
-    std::vector<std::string> _cameraModes;
-    std::vector<std::pair<int, std::string>> m_cameraModes;
+    std::vector<uint8_t> _cameraModes;
+    std::vector<std::pair<int, uint8_t>> m_cameraModes;
+    std::vector<std::pair<int, std::string>> m_cameraModesDropDown;
 
     const ImVec2 depthWinSize = ImVec2(0, 0);
     ImVec2 sourceDepthImageDimensions;
@@ -584,6 +594,9 @@ class ADIMainWindow {
     int viewSelectionChanged = 0; //flag when changed
     bool cameraOptionsTreeEnabled = true;
     bool pointCloudEnable = true;
+
+    const uint32_t MAX_FRAME_RATE = 25;
+    uint32_t m_max_frame_rate = MAX_FRAME_RATE;
 
     /**
 		* @brief Set any window a specific position
@@ -616,6 +629,7 @@ class ADIMainWindow {
     unsigned int ab_video_texture = 0;
     unsigned int depth_video_texture = 0;
     unsigned int pointCloud_video_texture = 0;
+    GLuint m_gl_pc_depthTex;
     bool setTempWinPositionOnce = true;
     bool setABWinPositionOnce = true;
     bool setDepthWinPositionOnce = true;

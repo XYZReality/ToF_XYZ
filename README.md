@@ -14,19 +14,20 @@ For more details on building the SDK on a host platform please check the **User 
 
 | Operating System | Documentation | GitHub main status | Downloads |
 | --------- | ----------- | ----------- | ----------- |
-| Windows | [Build Instructions](scripts/windows) | [![Build status](https://dev.azure.com/AnalogDevices/3DToF-rework/_apis/build/status/analogdevicesinc.ToF?branchName=main)](https://dev.azure.com/AnalogDevices/3DToF-rework/_build?view=runs&branchFilter=3310) | [![ToF evaluation kit installer](https://img.shields.io/badge/release-ToF_evaluation_kit_installer-blue.svg)](https://github.com/analogdevicesinc/ToF/releases/latest) |
-| Linux | [Build Instructions](doc/itof/linux_build_instructions.md) | [![Build status](https://dev.azure.com/AnalogDevices/3DToF-rework/_apis/build/status/analogdevicesinc.ToF?branchName=main)](https://dev.azure.com/AnalogDevices/3DToF-rework/_build?view=runs&branchFilter=3310) | [![ToF evaluation kit installer](https://img.shields.io/badge/release-ToF_evaluation_kit_installer-blue.svg)](https://github.com/analogdevicesinc/ToF/releases/latest) |
+| Windows | [Build Instructions](scripts/windows) | [![Build status](https://dev.azure.com/AnalogDevices/ToF/_apis/build/status%2Fanalogdevicesinc.ToF?branchName=main)](https://dev.azure.com/AnalogDevices/ToF/_build/latest?definitionId=42&branchName=main) | [![ToF evaluation kit installer](https://img.shields.io/badge/release-ToF_evaluation_kit_installer-blue.svg)](https://github.com/analogdevicesinc/ToF/releases/latest) |
+| Linux | [Build Instructions](doc/itof/linux_build_instructions.md) | [![Build status](https://dev.azure.com/AnalogDevices/ToF/_apis/build/status%2Fanalogdevicesinc.ToF?branchName=main)](https://dev.azure.com/AnalogDevices/ToF/_build/latest?definitionId=42&branchName=main) | [![ToF evaluation kit installer](https://img.shields.io/badge/release-ToF_evaluation_kit_installer-blue.svg)](https://github.com/analogdevicesinc/ToF/releases/latest) |
 
 ### Requirements
 
 Host Platform: 
 
-* Windows 10 or
-* Ubuntu 20.04 or
-* Ubuntu 22.04
+* Windows 11 or
+* Ubuntu 22.04 or
+* Ubuntu 24.04
 
 Other
-* Python 3.10
+* Python 3.10 on Windows and Ubuntu 22.04
+* Python 3.12 on Ubuntu 24.04
 
 ## Supported Embedded Platforms
 
@@ -34,7 +35,7 @@ For more details on building the SDK on an embedded platform please check the **
 ### ITOF camera
 | Operating system | Evaluation boards | Documentation | GitHub main status |
 | --------- | ----------- | ----------- | ----------- |
-| NXP | [EVAL-ADTF3175D-NXZ](https://wiki.analog.com/resources/eval/user-guides/eval-adtf3175d-nxz) | [Build instructions](doc/itof/nxp_build_instructions.md) | [![Build status](https://dev.azure.com/AnalogDevices/3DToF-rework/_apis/build/status/analogdevicesinc.ToF?branchName=main)](https://dev.azure.com/AnalogDevices/3DToF-rework/_build?view=runs&branchFilter=3310) |
+| NXP | [EVAL-ADTF3175D-NXZ](https://wiki.analog.com/resources/eval/user-guides/eval-adtf3175d-nxz) | [Build instructions](doc/itof/nxp_build_instructions.md) | [![Build status]([https://dev.azure.com/AnalogDevices/3DToF-rework/_apis/build/status/analogdevicesinc.ToF?branchName=main)](https://dev.azure.com/AnalogDevices/3DToF-rework/_build?view=runs&branchFilter=3310](https://dev.azure.com/AnalogDevices/ToF/_apis/build/status%2Fanalogdevicesinc.ToF?branchName=main)](https://dev.azure.com/AnalogDevices/ToF/_build/latest?definitionId=42&branchName=main)) |
 
 [How to write the SD card image onto the SD card?](doc/sdcard_burn.md)
 
@@ -44,10 +45,6 @@ From an architectural point of view, the SDK consists of two layers. One layer i
 
 For more details about the SDK check the links below:
 
-[Software stack documentation](sdk/readme.md)
-
-[API Doxygen documentation](https://analogdevicesinc.github.io/ToF/)
-
 [Building and installing the SDK](cmake/)
 
 ## SDK Examples
@@ -56,8 +53,6 @@ For more details about the SDK check the links below:
 | tof-viewer | <a href="examples/tof-viewer"> C++ </a> | Graphical User interface for visualising stream from depth camera |
 | data-collect | <a href="examples/data_collect"> C++ </a> | A command line application that takes in command line input arguments (like number of frames, mode to be set, folder location to save frame data) and captures the frames and stores in path provided |
 | first-frame | <a href="examples/first-frame"> C++ </a> <br> <a href="bindings/python/examples/first_frame"> Python </a> | An example code that shows the steps required to get to the point where camera frames can be captured. |
-| low_level_example | <a href="bindings/python/examples/low_level_example"> Python</a> | A simple example of how to get access to the low-level API of the camera. |
-| ROS2 CPP Wrapper | <a href="bindings/ros2/"> ROS2/C++</a> | ROS2 binding that publishes topics |
 
 ## Other Examples
 | Example | Language | Description |
@@ -78,7 +73,7 @@ For more details about the SDK check the links below:
 | examples | Example code for the supported programming languages |
 | scripts | Useful development scripts |
 | sdcard-images-utils | Things required to build a SD card image for targets |
-| sdk | SDK source code |
+| libaditof | Submodule with SDK source code |
 | tools | Standalone applications |
 
 ---

@@ -45,16 +45,18 @@
 #include <iostream>
 #include <map>
 
+
+
 using namespace aditof;
 
 static const char Help_Menu[] =
     R"(First-frame usage:
-    first-frame CONFIG
+    first-frame
     first-frame (-h | --help)
-    first-frame [-ip | --ip <ip>] [-m | --m <mode>] CONFIG
+    first-frame [-ip | --ip <ip>] [-m | --m <mode>] [-config | --config <config_file.json>]
 
     Arguments:
-      CONFIG            Input config_default.json file (which has *.ccb and *.cfg)
+      config_file.json   Input config_default.json file (which has *.ccb and *.cfg)
 
     Options:
       -h --help          Show this screen.
@@ -103,13 +105,14 @@ int main(int argc, char *argv[]) {
         {"-h", {"--help", false, "", "", false}},
         {"-ip", {"--ip", false, "", "", true}},
         {"-m", {"--m", false, "", "0", true}},
-        {"config", {"CONFIG", true, "last", "", true}}};
+        {"-config", {"--config", false, "last", "", false}}};
 
     CommandParser command;
     std::string arg_error;
     google::InitGoogleLogging(argv[0]);
     FLAGS_alsologtostderr = 1;
 
+    // parse arguments
     command.parseArguments(argc, argv, command_map);
     int result = command.checkArgumentExist(command_map, arg_error);
     if (result != 0) {
@@ -139,24 +142,7 @@ int main(int argc, char *argv[]) {
 
     result = command.checkMandatoryArguments(command_map, arg_error);
     if (result != 0) {
-        std::string argName = (arg_error == "-config")
-                                  ? "CONFIG"
-                                  : command_map[arg_error].long_option;
-
-        LOG(ERROR) << "Mandatory argument: " << argName << " missing";
-        std::cout << Help_Menu;
-        return -1;
-    }
-
-    result = command.checkMandatoryPosition(command_map, arg_error);
-    if (result != 0) {
-        std::string argName = (arg_error == "-config")
-                                  ? "CONFIG"
-                                  : command_map[arg_error].long_option;
-
-        LOG(ERROR) << "Mandatory argument " << argName
-                   << " is not on its correct position ("
-                   << command_map[arg_error].position << ").";
+        LOG(ERROR) << "Mandatory argument missing";
         std::cout << Help_Menu;
         return -1;
     }
@@ -168,23 +154,15 @@ int main(int argc, char *argv[]) {
     Status status = Status::OK;
     std::string configFile;
     std::string ip;
-    uint32_t mode = 0;
+    uint8_t mode = 0;
 
-    // Parsing mode type
-    std::string modeName;
-    try {
-        std::size_t counter;
-        mode = std::stoi(command_map["-m"].value, &counter);
-        if (counter != command_map["-m"].value.size()) {
-            throw command_map["-m"].value.c_str();
-        }
-    } catch (const char *name) {
-        modeName = name;
-    } catch (const std::exception &) {
-        modeName = command_map["-m"].value;
+    if (!command_map["-m"].value.empty()) {
+        mode = std::stoi(command_map["-m"].value);
     }
 
-    configFile = command_map["config"].value;
+    if (!command_map["-config"].value.empty()) {
+        configFile = command_map["-config"].value;
+    }
 
     if (!command_map["-ip"].value.empty()) {
         ip = "ip:" + command_map["-ip"].value;
@@ -219,7 +197,12 @@ int main(int argc, char *argv[]) {
         LOG(WARNING) << "Could not register callback";
     }
 
-    status = camera->initialize(configFile);
+    if (!configFile.empty()) {
+        status = camera->initialize(configFile);
+    } else {
+        status = camera->initialize();
+    }
+
     if (status != Status::OK) {
         LOG(ERROR) << "Could not initialize camera!";
         return 0;
@@ -232,25 +215,18 @@ int main(int argc, char *argv[]) {
     LOG(INFO) << "Kernel version: " << cameraDetails.kernelVersion;
     LOG(INFO) << "U-Boot version: " << cameraDetails.uBootVersion;
 
-    std::vector<std::string> frameTypes;
-    camera->getAvailableFrameTypes(frameTypes);
-    if (frameTypes.empty()) {
-        std::cout << "no frame type avaialble!";
+
+
+    std::vector<uint8_t> availableModes;
+    camera->getAvailableModes(availableModes);
+    if (availableModes.empty()) {
+        std::cout << "no mode available!";
         return 0;
     }
 
-    if (modeName.empty()) {
-        status = camera->getFrameTypeNameFromId(mode, modeName);
-        if (status != Status::OK) {
-            LOG(ERROR) << "Mode: " << mode
-                       << " is invalid for this type of camera!";
-            return 0;
-        }
-    }
-
-    status = camera->setFrameType(modeName);
+    status = camera->setMode(mode);
     if (status != Status::OK) {
-        LOG(ERROR) << "Could not set camera frame type!";
+        LOG(ERROR) << "Could not set camera mode!";
         return 0;
     }
 

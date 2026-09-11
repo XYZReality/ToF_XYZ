@@ -5,17 +5,23 @@ set -e
 
 SDK_VERSION=$1
 BRANCH=$2
+LIBADITOF_BRANCH=$3
 
 echo ${SDK_VERSION}
 echo ${BRANCH}
 
 if [ -z ${SDK_VERSION} ]; then
-	echo 'usage: ./runme.sh <sdk_version> <ToF_Branch>'
+	echo 'usage: ./runme.sh <sdk_version> <ToF_Branch> <libaditof_branch>'
 	exit 1
 fi
 
 if [ -z ${BRANCH} ]; then
-	echo 'usage: ./runme.sh <sdk_version> <ToF_Branch>'
+	echo 'usage: ./runme.sh <sdk_version> <ToF_Branch> <libaditof_branch>'
+	exit 1
+fi
+
+if [ -z ${LIBADITOF_BRANCH} ]; then
+	echo 'usage: ./runme.sh <sdk_version> <ToF_Branch> <libaditof_branch>'
 	exit 1
 fi
 
@@ -104,7 +110,7 @@ elif [[ $BUILD_TYPE == "ubuntu" ]]; then
 	#Build ubuntu rootfs
 	echo "*** Building ubuntu rootFS"
 	mkdir -p $ROOTDIR/build/ubuntu
-	bash $ROOTDIR/deboot.sh $BRANCH
+	bash $ROOTDIR/deboot.sh $BRANCH $LIBADITOF_BRANCH
 	ROOTFS_IMAGE=$ROOTDIR/build/ubuntu/rootfs.ext4
 fi
 
@@ -191,6 +197,14 @@ if [[ $BUILD_TYPE == "buildroot" ]]; then
 else
 	echo "        append root=/dev/mmcblk1p2 rootwait ro init=/usr/lib/init_resize.sh" >> $ROOTDIR/images/extlinux.conf
 fi
+echo "label ADSD3500-DUAL+ADSD3100" >> $ROOTDIR/images/extlinux.conf
+echo "        linux ../Image" >> $ROOTDIR/images/extlinux.conf
+echo "        fdt ../imx8mp-adi-tof-adsd3500-dual.dtb" >> $ROOTDIR/images/extlinux.conf
+if [[ $BUILD_TYPE == "buildroot" ]]; then
+	echo "        initrd ../rootfs.cpio.uboot" >> $ROOTDIR/images/extlinux.conf
+else
+	echo "        append root=/dev/mmcblk1p2 rootwait ro init=/usr/lib/init_resize.sh" >> $ROOTDIR/images/extlinux.conf
+fi
 
 
 mmd -i tmp/part1.fat32 ::/extlinux
@@ -201,9 +215,9 @@ mcopy -s -i tmp/part1.fat32 $ROOTDIR/build/linux-imx/arch/arm64/boot/dts/freesca
 if [[ $BUILD_TYPE == "buildroot" ]]; then
 	mcopy -s -i tmp/part1.fat32 $ROOTDIR/build/buildroot/output/images/rootfs.cpio.uboot ::/
 fi
-dd if=/dev/zero of=${IMG} bs=1M count=6001
+dd if=/dev/zero of=${IMG} bs=1M count=11001
 dd if=$ROOTDIR/build/imx-mkimage/iMX8M/flash.bin of=${IMG} bs=1K seek=32 conv=notrunc
-env PATH="$PATH:/sbin:/usr/sbin" parted --script ${IMG} mklabel msdos mkpart primary 2MiB 150MiB mkpart primary 150MiB 6000MiB
+env PATH="$PATH:/sbin:/usr/sbin" parted --script ${IMG} mklabel msdos mkpart primary 2MiB 150MiB mkpart primary 150MiB 11000MiB
 dd if=tmp/part1.fat32 of=${IMG} bs=1M seek=2 conv=notrunc
 dd if=${ROOTFS_IMAGE} of=${IMG} bs=1M seek=150 conv=notrunc
 echo -e "\n\n*** Image is ready - images/${IMG}"

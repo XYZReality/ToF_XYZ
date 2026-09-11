@@ -61,23 +61,12 @@ class ADIController {
 		* @brief			Set the camera mode, directly to SDK.
 		* @param	mode	Name of mode declared on SDK
 		*/
-    void setMode(const std::string &mode);
-
-    /**
-		* @brief	Fetch all supported modes. The information comes directly from SDK
-		*/
-    std::vector<std::string>
-    getAvailableModes(std::vector<std::string> &availableModes);
+    void setMode(const uint8_t &mode);
 
     /**
 		* @brief	Get camera temperature
 		*/
     std::pair<float, float> getTemperature();
-
-    aditof::Status writeAFEregister(uint16_t *address, uint16_t *data,
-                                    uint16_t noOfEntries = 1);
-    aditof::Status readAFEregister(uint16_t *address, uint16_t *data,
-                                   uint16_t noOfEntries = 1);
 
     /**
 		* @brief			Start recording video.
@@ -162,6 +151,11 @@ class ADIController {
 		* @brief Gets camera bit counts.
 		*/
     int getbitCount() const;
+
+    /**
+    * @brief Gets camera in use.
+    */
+    int getCameraInUse() const;
 
     std::vector<std::shared_ptr<aditof::Camera>> m_cameras;
     std::unique_ptr<ADIToFRecorder> m_recorder;

@@ -1,130 +1,55 @@
-# Linux Build Instructions
+# Linux Host Build Instructions
 
-**Please note, use the applicable tag, when cloning, and release version when getting the latest depth compute library files for the embedded system. As of writing, version 5.0.0 of the release is available as well as tag v5.0.0.**
-
-Note, all actities below are assuming to be done in a base folder.
-
-```
-base folder
-├── glog
-├── libwebsockets
-├── protobuf
-└── ToF
-```
+**Please note, use the applicable tag, when cloning, and release version when getting the latest depth compute library files for the embedded system. As of writing, version 6.1.0 of the release is available as well as tag v6.1.0.**
 
 ## Building the SDK only
 
 ### Pre-requisites
 * CMake
-* Glog v0.6.0
-* Libwebsockets v3.1
-* Protocol Buffers v3.9.0
+* g++
+* Python 3 - note, we are assuming Python 3.8 in this document, change as needed for your setup
+* OpenCV - for the examples
+* OpenGL - for the examples
+* Doxygen - for documentation generation
+* Graphviz - for documentation generation
 
-### Installing the dependencies
-* CMake:
+#### Installing the pre-requisites
 ```console
-sudo apt install cmake
+sudo apt update
+sudo apt install cmake g++ \
+     libopencv-contrib-dev libopencv-dev \
+     libgl1-mesa-dev libglfw3-dev \
+     doxygen graphviz
 ```
 
-* Glog:
+For Linux builds install the necessary version of Python dev libraries. For example for Ubuntu 24.04 with Python 3.12 as the default Python:
 ```console
-pushd .
-git clone --branch v0.6.0 --depth 1 https://github.com/google/glog
-cd glog
-mkdir build_0_6_0 && cd build_0_6_0
-cmake -DWITH_GFLAGS=off -DCMAKE_INSTALL_PREFIX=/opt/glog ..
-sudo cmake --build . --target install
-popd
+sudo apt install python3.12-dev
 ```
 
-* Libwebsockets:
-```console
-pushd .
-git clone --branch v3.1-stable --depth 1 https://github.com/warmcat/libwebsockets
-cd libwebsockets
-mkdir build_3_1 && cd build_3_1
-cmake -DLWS_WITH_SSL=OFF -DLWS_STATIC_PIC=ON -DCMAKE_INSTALL_PREFIX=/opt/websockets ..
-sudo cmake --build . --target install
-popd
-```
-
-* protobuf:
-```console
-pushd .
-git clone --branch v3.9.0 --depth 1 https://github.com/protocolbuffers/protobuf
-cd protobuf
-mkdir build_3_9_0 && cd build_3_9_0
-cmake -Dprotobuf_BUILD_TESTS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX=/opt/protobuf ../cmake
-sudo cmake --build . --target install
-cd ../..
-popd
-```
-
-
-### Download and build SDK only
+### Building the SDK with Example
 
 Please note, ensure you are using the intended branch.
-
-```console
-git clone --branch v5.0.0 --depth 1 https://github.com/analogdevicesinc/ToF
-cd ToF
-mkdir build && cd build
-cmake -DWITH_EXAMPLES=off -DCMAKE_PREFIX_PATH="/opt/glog;/opt/protobuf;/opt/websockets" ..
-make -j4
-```
 
 See [here](../../cmake/readme.md) for details on the cmake options.
 
-## SDK with examples
+Choose the branch as needed. In our example below we are using the branch/tag v6.1.0:
+* --branch v6.1.0
 
-### Additional pre-requisites
-* OpenCV
-* OpenGL
-
-### Installing the additional dependencies
-* OpenCV:
-```console
-sudo apt install libopencv-contrib-dev
-sudo apt install libopencv-dev
-```
-
-* OpenGL:
-```console
-sudo apt install libgl1-mesa-dev libglfw3-dev
-```
-
-### Build SDK with examples
-
-Please note, ensure you are using the intended branch.
+To build:
+* the examples add the CMake option: -DWITH_EXAMPLES=on
+* the documentation add the CMake optionL -DWITH_DOC=on 
 
 ```console
-git clone --branch v5.0.0 --depth 1 https://github.com/analogdevicesinc/ToF
+git clone --branch v6.1.0 https://github.com/analogdevicesinc/ToF
 cd ToF
+git submodule update --init --recursive
 mkdir build && cd build
-cmake -DWITH_EXAMPLES=on -DCMAKE_PREFIX_PATH="/opt/glog;/opt/protobuf;/opt/websockets" ..
-make -j4
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j
 ```
 
-## SDK with bindings
-
-- Please check the readme files for each type of binding in the [bindings directory](../../bindings).
-
-## Generate doxygen documentation
-
-Requirements:
-* Doxygen
-* Graphviz
-
-```console
-sudo apt-get install doxygen graphviz
-```
-
-In order to generate the doxygen documentation you must compile the sdk in the following way:
-```console
-cmake -DCMAKE_PREFIX_PATH="/opt/glog;/opt/protobuf;/opt/websockets;/opt/opencv" -DWITH_DOC=on ..
-make -j4 doc
-```
-After compilation, the documentation can be found at this path:
+Note, the documentation can be found at this path:
 ```console
 build/doc/doxygen_doc/html/index.html
 ```
